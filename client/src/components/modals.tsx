@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import { DEPARTMENTS, LIFECYCLE, SCOPES, SCOPE_STAGES, TITLES, WORKLOAD_TIERS, WORKLOAD_TIER_NAMES } from '../../../shared/constants';
 import { fmtMoney, type Model } from '../../../shared/engine';
-import { isEmail, type ProjectEmail } from '../../../shared/notify';
+import { emailAsText, isEmail, mailtoLink, outlookWebLink, type ProjectEmail } from '../../../shared/notify';
 import { parseCpsCsv, scopeStages, stageLabel } from '../../../shared/schedule';
 import type { Engagement } from '../../../shared/types';
 import { api } from '../lib/api';
@@ -251,14 +251,20 @@ function DetailsTab({ e, editable }: { e: Engagement; editable: boolean }) {
 }
 
 // ---------------- new-project email ----------------
-export function EmailTeamModal({ id }: { id: string }) {
+/** The "new project commissioned" email for one engagement. With a connected sending account it
+    sends directly; otherwise it opens the ready-made email in the person's own Outlook (one click). */
+export function EmailTeamModal({ id, justCreated }: { id: string; justCreated?: boolean }) {
   const { act } = useWorkspace();
   const modal = useModal();
   const toast = useToast();
   const q = useQuery({ queryKey: ['notify-preview', id], queryFn: () => api.get<{ email: ProjectEmail; sender: string | null }>(`/engagements/${id}/notify`) });
   const [busy, setBusy] = useState(false);
+  const [opened, setOpened] = useState(false);
   const p = q.data?.email;
-  const send = async () => {
+  const auto = !!q.data?.sender;
+  const nobody = !!p && !p.to.length && !p.cc.length;
+  const logOpened = (app: 'outlook-web' | 'mail-app' | 'copied') => { setOpened(true); api.post(`/engagements/${id}/notify/opened`, { app }).catch(() => {}); };
+  const sendDirect = async () => {
     setBusy(true);
     type SendResult = { sent: boolean; error?: string; skipped?: string; to: string[]; cc: string[] };
     const box: { r?: SendResult } = {};
@@ -266,22 +272,47 @@ export function EmailTeamModal({ id }: { id: string }) {
     setBusy(false);
     const r = box.r;
     if (!r) return;
-    if (r.sent) { toast(`Email sent to ${r.to.length + r.cc.length} people`); modal.open(<EngagementModal id={id} />); }
+    if (r.sent) { toast(`Email sent to ${r.to.length + r.cc.length} people`); modal.close(); }
     else toast('Not sent: ' + (r.error ?? r.skipped), 'error');
   };
+  const copy = async () => {
+    if (!p) return;
+    try { await navigator.clipboard.writeText(emailAsText(p)); toast('Email copied — paste it into a new message'); logOpened('copied'); }
+    catch { toast('Copy failed — select the text below and copy it', 'error'); }
+  };
   return (
-    <ModalFrame title="📧 Email the team" footer={<>
-      <button className="btn btn-ghost btn-sm" onClick={() => modal.open(<EngagementModal id={id} />)}>← Back</button>
-      <button className="btn btn-primary btn-sm" disabled={!p || busy || (!p.to.length && !p.cc.length) || !q.data?.sender} onClick={send}>{busy ? 'Sending…' : 'Send email'}</button>
-    </>}>
-      {!p ? <div className="muted small">Loading preview…</div> : (
+    <ModalFrame title={justCreated ? '✅ Engagement created — email the team' : '📧 Email the team'} footer={!justCreated && (
+      <button className="btn btn-ghost btn-sm" onClick={() => modal.open(<EngagementModal id={id} />)}>← Back to engagement</button>
+    )}>
+      {!p ? <div className="muted small">Preparing the email…</div> : (
         <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
-          {!q.data?.sender && <div className="viewer-banner">The sending account isn't set up yet — an admin needs to add the Microsoft 365 (MS_…) settings in Vercel.</div>}
-          <div><b>To:</b> {p.to.join(', ') || <span className="muted">nobody (no emails on file)</span>}</div>
-          <div><b>Cc:</b> {p.cc.join(', ') || <span className="muted">—</span>}</div>
+          {nobody ? (
+            <div className="viewer-banner">Nobody on this engagement has an email address yet. Add them under <b>Data Management → Roster</b>, then use <b>📧 Email team</b> on the engagement.</div>
+          ) : (
+            <div className="box" style={{ marginBottom: 12 }}>
+              {auto ? (
+                <>
+                  <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>Send from {q.data!.sender}</div>
+                  <button className="btn btn-primary" disabled={busy} onClick={sendDirect}>{busy ? 'Sending…' : '📨 Send email now'}</button>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>Open this email in Outlook, then press <u>Send</u>:</div>
+                  <div className="row">
+                    <a className="btn btn-primary" href={outlookWebLink(p)} target="_blank" rel="noopener noreferrer" onClick={() => logOpened('outlook-web')}>📨 Open in Outlook (web)</a>
+                    <a className="btn" href={mailtoLink(p)} onClick={() => logOpened('mail-app')}>🖥 Open in Outlook app</a>
+                    <button className="btn btn-ghost" onClick={copy}>📋 Copy email</button>
+                  </div>
+                  {opened && <div className="small" style={{ color: 'var(--ok)', marginTop: 8 }}>✅ Opened — remember to press <b>Send</b> in Outlook. You can close this window.</div>}
+                </>
+              )}
+            </div>
+          )}
+          <div><b>To:</b> {p.to.join(', ') || <span className="muted">—</span>}</div>
+          <div><b>Cc:</b> {p.cc.join(', ') || <span className="muted">— (add the planning committee in Settings)</span>}</div>
           {p.missing.length > 0 && <div style={{ color: 'var(--warn)' }}>No email on file for {p.missing.join(', ')} — add it under Data Management → Roster.</div>}
           <div><b>Subject:</b> {p.subject}</div>
-          <div className="box" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{p.body}</div>
+          <div className="box" style={{ whiteSpace: 'pre-wrap', marginTop: 8, userSelect: 'text' }}>{p.body}</div>
         </div>
       )}
     </ModalFrame>

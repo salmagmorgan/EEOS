@@ -17,6 +17,9 @@ export interface SendResult {
   sent: boolean;
   /** Why nothing was sent (not an error): disabled, or no recipients. */
   skipped?: string;
+  /** True when no sending account is connected: the person creating the engagement sends it from
+      their own mail app (one-click), so the web app should open the ready-made email for them. */
+  manual?: boolean;
   error?: string;
   to: string[];
   cc: string[];
@@ -43,6 +46,7 @@ export async function sendProjectEmail(db: DB, mailer: Mailer, engagementId: str
   const base = { to: mail.to, cc: mail.cc, missing: mail.missing };
   if (!settings.enabled && !opts.force) return { ...base, sent: false, skipped: 'New-project emails are turned off in Settings.' };
   if (!mail.to.length && !mail.cc.length) return { ...base, sent: false, skipped: 'Nobody on this engagement has an email address yet, and no planning committee is set.' };
+  if (!mailer.from) return { ...base, sent: false, manual: true, skipped: 'No sending account is connected, so the email opens in your own mail app for you to send.' };
   let result: SendResult;
   try {
     await mailer.send({ to: mail.to.length ? mail.to : mail.cc, cc: mail.to.length ? mail.cc : [], subject: mail.subject, text: mail.body, replyTo: user.email });

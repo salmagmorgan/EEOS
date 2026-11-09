@@ -90,3 +90,26 @@ export function buildProjectEmail(
   const cc = settings.committee.map((x) => x.toLowerCase()).filter((x) => !to.includes(x));
   return { subject: fill(settings.subject, fields), body: fill(settings.body, fields), to, cc, missing, fields };
 }
+
+/* One-click sending from the person's own mail app: links that open a ready-made email. */
+const q = (params: Record<string, string>) =>
+  Object.entries(params).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+
+/** Opens the default mail app (Outlook desktop, Apple Mail…). */
+export function mailtoLink(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'>): string {
+  const to = m.to.length ? m.to : m.cc;
+  const cc = m.to.length ? m.cc : [];
+  return `mailto:${to.join(',')}?${q({ cc: cc.join(','), subject: m.subject, body: m.body.replace(/\r?\n/g, '\r\n') })}`;
+}
+
+/** Opens a new message in Outlook on the web (Microsoft 365). */
+export function outlookWebLink(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'>): string {
+  const to = m.to.length ? m.to : m.cc;
+  const cc = m.to.length ? m.cc : [];
+  return `https://outlook.office.com/mail/deeplink/compose?${q({ to: to.join(','), cc: cc.join(','), subject: m.subject, body: m.body })}`;
+}
+
+/** Plain-text version for copying into any mail app. */
+export function emailAsText(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'>): string {
+  return [`To: ${m.to.join('; ')}`, m.cc.length ? `Cc: ${m.cc.join('; ')}` : '', `Subject: ${m.subject}`, '', m.body].filter((l, i) => l || i > 2).join('\n');
+}

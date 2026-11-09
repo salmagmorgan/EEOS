@@ -6,14 +6,15 @@ import { parseCpsCsv, parseDay, scopeStages, toDay } from '../../../shared/sched
 import { buildProjectEmail } from '../../../shared/notify';
 import type { CpsStage, NotificationSettings } from '../../../shared/types';
 import { CpsBar } from '../components/charts';
-import { TeamPicker } from '../components/modals';
-import { Card, PageHead, useToast } from '../components/ui';
+import { EmailTeamModal, TeamPicker } from '../components/modals';
+import { Card, PageHead, useModal, useToast } from '../components/ui';
 import { api } from '../lib/api';
 import { useWorkspace } from '../lib/workspace';
 
 export default function NewEngagement() {
   const { model, canEdit, act } = useWorkspace();
   const toast = useToast();
+  const modal = useModal();
   const notifyQ = useQuery({ queryKey: ['notify-settings'], queryFn: () => api.get<{ settings: NotificationSettings; sender: string | null }>('/settings/notifications'), enabled: canEdit });
   const [notify, setNotify] = useState(true);
   const nav = useNavigate();
@@ -43,18 +44,25 @@ export default function NewEngagement() {
     setCps(parsed.length ? parsed : null);
     setCpsMsg(parsed.length ? `✅ Loaded ${parsed.length} stages${unmatched.length ? ` — skipped ${unmatched.join(', ')}` : ''}.` : '⚠ No rows matched this scope’s stage names.');
   };
-  type EmailResult = { sent: boolean; skipped?: string; error?: string; to: string[]; cc: string[]; missing: string[] } | null;
+  type EmailResult = { sent: boolean; manual?: boolean; skipped?: string; error?: string; to: string[]; cc: string[]; missing: string[] } | null;
   const submit = async () => {
-    const box: { email: EmailResult } = { email: null };
+    const box: { email: EmailResult; id?: string } = { email: null };
     const ok = await act(async () => {
-      const r = await api.post<{ email: EmailResult }>('/engagements', {
+      const r = await api.post<{ email: EmailResult; engagement: { id: string } }>('/engagements', {
         ...f, ...team, end: f.end || null, subScope: strat ? f.subScope || null : null, price: f.price === '' ? null : Number(f.price), cost: f.cost === '' ? null : Number(f.cost), customCps: cps, notify,
       });
       box.email = r.email;
+      box.id = r.engagement.id;
     });
     if (!ok) return;
     const e = box.email;
     if (!e) toast(`Engagement “${f.name}” created`);
+    else if (e.manual) {
+      // One-click mode: hand the ready-made email to the person creating the engagement.
+      nav('/engagements/status');
+      modal.open(<EmailTeamModal id={box.id!} justCreated />);
+      return;
+    }
     else if (e.sent) toast(`Engagement “${f.name}” created · email sent to ${e.to.length + e.cc.length} people${e.missing.length ? ` (no email on file for ${e.missing.join(', ')})` : ''}`);
     else toast(`Engagement “${f.name}” created, but the email was not sent: ${e.error ?? e.skipped}`, 'error');
     nav('/engagements/status');
@@ -131,7 +139,7 @@ export default function NewEngagement() {
                 <div><b>To:</b> {emailPreview.to.join(', ') || <span className="muted">nobody on this team has an email on file</span>}</div>
                 <div><b>Cc (planning committee):</b> {emailPreview.cc.join(', ') || <span className="muted">none set — add it in Settings</span>}</div>
                 {emailPreview.missing.length > 0 && <div style={{ color: 'var(--warn)' }}>No email on file for {emailPreview.missing.join(', ')} — add it under Data Management → Roster.</div>}
-                {!notifyQ.data?.sender && <div style={{ color: 'var(--warn)' }}>The sending account isn't set up yet, so the email won't go out until it is.</div>}
+                {!notifyQ.data?.sender && <div className="muted">After you click <b>Create engagement</b>, the email opens ready-made in Outlook — you just press <b>Send</b>.</div>}
               </>
             )}
           </div>

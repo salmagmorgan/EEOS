@@ -85,6 +85,8 @@ or upload the seed file under **Data Management → Backup & restore** (Vercel l
 
 ## New-project emails
 
+**Without any setup, EEOS works in one-click mode:** right after an engagement is created, a window shows the filled-in email with **Open in Outlook (web)**, **Open in Outlook app** and **Copy email** buttons — Outlook opens with recipients, subject and text filled in, and the person presses Send. Connecting a sending account (below) switches EEOS to sending fully automatically.
+
 When an engagement is created, EEOS emails its leader, members, Operations members and supervisor, with the planning committee in copy, using the template in **Settings → New-project emails** (editable; every `{{field}}` fills in automatically). The email can be switched off per engagement on the New Engagement form, re-sent from the engagement's **📧 Email team** button, and every send is recorded in the Audit Trail. If sending fails, the engagement is still created and the message says why.
 
 Setup, once:

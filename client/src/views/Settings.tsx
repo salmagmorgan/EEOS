@@ -105,7 +105,7 @@ function ProjectEmails() {
         When an engagement is created, this email goes to its leader, members, Operations members and supervisor, with the planning committee in copy.
       </div>
       <div className="box small" style={{ lineHeight: 1.6 }}>
-        <b>Sending account:</b> {q.data.sender ? <span style={{ color: 'var(--ok)' }}>✅ {q.data.sender}</span> : <span style={{ color: 'var(--warn)' }}>⚠ Not set up yet — add the Microsoft 365 (MS_…) settings in Vercel — see the README. Engagements are still created; the email just isn't sent.</span>}
+        <b>Sending account:</b> {q.data.sender ? <span style={{ color: 'var(--ok)' }}>✅ {q.data.sender}</span> : <span><b style={{ color: 'var(--ok)' }}>One-click mode</b> — after creating an engagement, the email opens ready-made in Outlook and you press Send. (To send fully automatically instead, IT can connect Microsoft 365 — see the README.)</span>}
         <br /><b>People with an email on file:</b> {model.talents.length - missingEmails} of {model.talents.length}{missingEmails > 0 && <> — add the rest under <b>Data Management → Roster</b>.</>}
       </div>
       <fieldset disabled={!isAdmin} style={{ border: 'none' }}>
@@ -150,8 +150,8 @@ function ProjectEmails() {
           {draft && <button className="btn btn-ghost btn-sm" onClick={() => setDraft(null)}>Discard changes</button>}
           <button className="btn btn-ghost btn-sm" onClick={() => set({ subject: q.data!.defaults.subject, body: q.data!.defaults.body })}>Restore original template</button>
           <span className="spacer" />
-          <button className="btn btn-sm" disabled={!q.data.sender} title={q.data.sender ? '' : 'Set up the sending account first'}
-            onClick={() => act(() => api.post('/settings/notifications/test', { engagementId: example?.id }), 'Test email sent to you — check your inbox')}>Send a test to me (saved settings)</button>
+          {q.data.sender && <button className="btn btn-sm"
+            onClick={() => act(() => api.post('/settings/notifications/test', { engagementId: example?.id }), 'Test email sent to you — check your inbox')}>Send a test to me (saved settings)</button>}
         </div>
       )}
     </Card>

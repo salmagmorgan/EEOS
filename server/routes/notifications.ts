@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { DEFAULT_NOTIFICATION_SETTINGS, isEmail } from '../../shared/notify.js';
 import { requireRole } from '../auth.js';
-import type { DB } from '../db.js';
+import { type DB, run } from '../db.js';
 import type { Mailer } from '../mailer.js';
 import { composeProjectEmail, getNotificationSettings, saveNotificationSettings, sendProjectEmail } from '../notifications.js';
 import { HttpError } from '../store.js';
@@ -47,6 +47,19 @@ export function notificationRoutes(db: DB, mailer: Mailer): Router {
   /** Preview, or (re)send, the new-project email for an engagement. */
   r.get('/engagements/:id/notify', requireRole('viewer'), route(async (req) => ({ email: await composeProjectEmail(db, req.params.id), sender: mailer.from })));
   r.post('/engagements/:id/notify', requireRole('editor'), route(async (req) => ({ result: await sendProjectEmail(db, mailer, req.params.id, me(req), { force: true }) })));
+
+  /** Record that someone opened the ready-made email in their own mail app (one-click mode). */
+  r.post('/engagements/:id/notify/opened', requireRole('editor'), route(async (req) => {
+    const { app } = parse(z.object({ app: z.enum(['outlook-web', 'mail-app', 'copied']) }), req.body);
+    const mail = await composeProjectEmail(db, req.params.id);
+    const user = me(req);
+    const how = { 'outlook-web': 'Outlook on the web', 'mail-app': 'their mail app', copied: 'copied to clipboard' }[app];
+    await run(db, 'INSERT INTO audit_log (at,user_id,user_name,action,entity_type,entity_id,entity_name,details) VALUES (?,?,?,?,?,?,?,?)', [
+      new Date().toISOString(), user.id, user.name, 'Opened new-project email to send', 'email', req.params.id, mail.fields.project_name,
+      `${how} · ${mail.to.length + mail.cc.length} recipient(s)`,
+    ]);
+    return { ok: true };
+  }));
 
   return r;
 }
