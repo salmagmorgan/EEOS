@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6C68D6"/><stop offset=".55" stop-color="#3B3A9A"/><stop offset="1" stop-color="#14163A"/></linearGradient>
+    <linearGradient id="bar" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff"/></linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- stylised E built from three rising bars: engagements moving toward excellence -->
+  <rect x="300" y="250" width="110" height="524" rx="22" fill="#fff"/>
+  <rect x="300" y="250" width="430" height="110" rx="22" fill="url(#bar)"/>
+  <rect x="300" y="457" width="340" height="110" rx="22" fill="url(#bar)" opacity=".92"/>
+  <rect x="300" y="664" width="430" height="110" rx="22" fill="url(#bar)"/>
+  <circle cx="790" cy="305" r="44" fill="#ED2429"/>
+</svg>

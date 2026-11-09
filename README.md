@@ -115,6 +115,10 @@ Setup, once:
 
 For SMTP, optionally set `EMAIL_FROM` to the name and address people see, e.g. `TBC EEOS <eeos@theboardconsulting.com>`. Use **Send a test to me** in Settings to check it.
 
+## App icon
+
+`client/public/icons/` holds the home-screen icon (`apple-touch-icon.png`, 180×180), install icons (192/512) and favicons, rendered from `option-b.svg` (the TBC mark in a ring with "EEOS"). `option-a.svg` and `option-c.svg` are alternatives. `client/public/manifest.webmanifest` and the tags in `client/index.html` make "Add to Home Screen" use the icon and the name **EEOS** and open full-screen.
+
 ## Other hosts
 
 Anywhere that runs Node works too; with a persistent disk you can skip Turso and keep the default local file.

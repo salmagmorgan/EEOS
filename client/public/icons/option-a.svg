@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1D2547"/><stop offset="1" stop-color="#070912"/></linearGradient>
+    <linearGradient id="rib" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3730A3"/><stop offset=".55" stop-color="#6C68D6"/><stop offset="1" stop-color="#B1A7DA"/></linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".42" r=".55"><stop offset="0" stop-color="#6C68D6" stop-opacity=".45"/><stop offset="1" stop-color="#6C68D6" stop-opacity="0"/></radialGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="10"/></filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+  <path d="M -40 760 C 180 640 330 860 540 720 C 740 590 860 760 1080 640" fill="none" stroke="url(#rib)" stroke-width="70" stroke-linecap="round" opacity=".9"/>
+  <path d="M -40 760 C 180 640 330 860 540 720 C 740 590 860 760 1080 640" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round" opacity=".55" filter="url(#soft)"/>
+  <text x="512" y="520" text-anchor="middle" font-family="Inter Display" font-weight="800" font-size="300" letter-spacing="-8" fill="#fff">EEOS</text>
+  <circle cx="880" cy="268" r="26" fill="#ED2429"/>
+</svg>
