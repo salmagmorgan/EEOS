@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildModel, utilStatusFor } from '../shared/engine';
-import { computeCps, health, parseCpsCsv, priority, progressFor } from '../shared/schedule';
+import { computeCps, health, parseCpsCsv, priority, progressFor, scheduleInfo } from '../shared/schedule';
 import type { Engagement, SeedFile, WorkspaceData } from '../shared/types';
 
 const seed: SeedFile = JSON.parse(fs.readFileSync('server/seed/demo-seed.json', 'utf8'));
@@ -32,6 +32,32 @@ describe('schedule', () => {
     expect(health(eng({ start: '2026-08-01', end: '2026-11-20' }), NOW)).toBe('About to Close');
     expect(priority(eng({ teamIds: ['t1'] }), NOW)).toBe('High');
     expect(priority(eng({}), NOW)).toBe('Low');
+  });
+  it('never invents stage dates or an end date', () => {
+    const info = scheduleInfo(eng({ end: null }), NOW)!;
+    expect(info.cps).toEqual([]);
+    expect(info.isCustomSchedule).toBe(false);
+    expect(info.end).toBeNull();
+    expect(info.daysLeft).toBeNull();
+    // With no time frame, health comes from the stage alone.
+    expect(health(eng({ end: null, stage: 'kickoff' }), NOW)).toBe('Just Opened');
+    expect(health(eng({ end: null, stage: 'fieldwork' }), NOW)).toBe('Midway');
+    expect(health(eng({ end: null, stage: 'reportdev' }), NOW)).toBe('Complete');
+    // An entered end date still gives days left, but still no stage plan.
+    const dated = scheduleInfo(eng({ end: '2026-12-09' }), NOW)!;
+    expect(dated.cps).toEqual([]);
+    expect(dated.daysLeft).toBe(30);
+  });
+  it('takes the time frame from an uploaded CPS', () => {
+    const customCps = [
+      { id: 'kickoff' as const, label: 'Project kickoff', start: '2026-11-01', end: '2026-11-15' },
+      { id: 'situational' as const, label: 'Situational Analysis', start: '2026-11-15', end: '2027-01-10' },
+    ];
+    const info = scheduleInfo(eng({ end: null, customCps }), NOW)!;
+    expect(info.isCustomSchedule).toBe(true);
+    expect(info.cps).toHaveLength(2);
+    expect(info.end!.toISOString().slice(0, 10)).toBe('2027-01-10');
+    expect(info.daysLeft).toBe(62);
   });
   it('parses a weekly CPS upload and reports unknown activities', () => {
     const csv = 'Activity,Start Week,End Week,Owner\nProject kickoff,1,2,Amira\n"Situational Analysis",3,6\nMystery,1,2';
@@ -89,6 +115,14 @@ describe('model', () => {
     const ctx = m.copilotContext();
     expect(ctx).toContain(`${m.active.length} active engagements`);
     expect(ctx).toContain(m.talents[0].name);
+  });
+  it('has no estimated end dates in the seed', () => {
+    expect(m.active.length).toBeGreaterThan(0);
+    m.active.filter((e) => /^e\d+$/.test(e.id)).forEach((e) => expect(e.end).toBeNull());
+  });
+  it('keeps open-ended engagements counting toward future months', () => {
+    const t = m.talents.find((x) => m.active.some((e) => e.end === null && m.staff(e).includes(x.id)))!;
+    expect(m.talentMonthUtil(t, 2027, 5).value).toBeGreaterThan(0);
   });
   it('has consistent year buckets', () => {
     const b = m.yearBuckets(2026);

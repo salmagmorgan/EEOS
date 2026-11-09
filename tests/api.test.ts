@@ -102,6 +102,20 @@ describe.each([
     await admin.put(`/api/engagements/${hist.id}/financials`).set('X-EEOS', '1').send({ price: 1000, cost: 400 }).expect(200);
   });
 
+  it('creates engagements without an end date and never fills one in', async () => {
+    const w = (await admin.get('/api/workspace')).body;
+    const lead = w.talents.find((t: { status: string; department: string }) => t.status === 'active' && t.department !== 'Operations');
+    const res = await admin.post('/api/engagements').set('X-EEOS', '1').send({ name: 'Open-ended', client: 'C1', sector: 'Retail', scope: 'Research', leadId: lead.id, start: '2026-11-01' }).expect(200);
+    expect(res.body.engagement.end).toBeNull();
+    expect(res.body.engagement.customCps).toBeNull();
+    const id = res.body.engagement.id;
+    const set = await admin.patch(`/api/engagements/${id}`).set('X-EEOS', '1').send({ end: '2027-03-01' }).expect(200);
+    expect(set.body.engagement.end).toBe('2027-03-01');
+    const cleared = await admin.patch(`/api/engagements/${id}`).set('X-EEOS', '1').send({ end: null }).expect(200);
+    expect(cleared.body.engagement.end).toBeNull();
+    await admin.patch(`/api/engagements/${id}`).set('X-EEOS', '1').send({ end: '2026-10-01' }).expect(400);
+  });
+
   it('validates input', async () => {
     const res = await admin.post('/api/engagements').set('X-EEOS', '1').send({ name: '', client: 'C', sector: 'S', scope: 'Research', leadId: 'nobody' });
     expect(res.status).toBe(400);

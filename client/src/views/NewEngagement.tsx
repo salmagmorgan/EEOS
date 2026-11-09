@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SCOPES, SCOPE_STAGES, SECTORS, SUB_SCOPES_STRATEGY, WORKLOAD_TIERS, WORKLOAD_TIER_NAMES, type Scope } from '../../../shared/constants';
-import { addDays, parseCpsCsv, parseDay, scopeStages, toDay } from '../../../shared/schedule';
+import { parseCpsCsv, parseDay, scopeStages, toDay } from '../../../shared/schedule';
 import type { CpsStage } from '../../../shared/types';
 import { CpsBar } from '../components/charts';
 import { TeamPicker } from '../components/modals';
@@ -16,7 +16,7 @@ export default function NewEngagement() {
   const today = toDay(model.now);
   const blank = () => ({
     name: '', client: '', country: 'Egypt', sector: '', scope: 'Research' as Scope, subScope: '', workloadTier: 'Quick Work',
-    price: '', cost: '', start: today, end: toDay(addDays(model.now, SCOPE_STAGES.Research.typicalDays)), stage: 'kickoff', notes: '',
+    price: '', cost: '', start: today, end: '', stage: 'kickoff', notes: '',
   });
   const [f, setF] = useState(blank);
   const [team, setTeam] = useState({ leadId: staffable[0]?.id ?? '', teamIds: staffable[0] ? [staffable[0].id] : [], supervisorId: null as string | null });
@@ -25,11 +25,11 @@ export default function NewEngagement() {
   const set = (k: keyof ReturnType<typeof blank>) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const stages = scopeStages(f.scope);
   const recs = useMemo(() => model.recommendations(f.sector, f.scope, 5), [model, f.sector, f.scope]);
-  const datesOk = f.start && f.end && parseDay(f.end) > parseDay(f.start);
+  const datesOk = !!f.start && (!f.end || parseDay(f.end) > parseDay(f.start));
   const strat = f.scope === 'Strategy' || f.scope === 'Research and Strategy';
 
   const changeScope = (scope: Scope) => {
-    setF({ ...f, scope, stage: scopeStages(scope)[0].id, end: toDay(addDays(parseDay(f.start || today), SCOPE_STAGES[scope].typicalDays)) });
+    setF({ ...f, scope, stage: scopeStages(scope)[0].id });
     setCps(null);
     setCpsMsg('');
   };
@@ -40,7 +40,7 @@ export default function NewEngagement() {
   };
   const submit = async () => {
     const ok = await act(() => api.post('/engagements', {
-      ...f, ...team, subScope: strat ? f.subScope || null : null, price: f.price === '' ? null : Number(f.price), cost: f.cost === '' ? null : Number(f.cost), customCps: cps,
+      ...f, ...team, end: f.end || null, subScope: strat ? f.subScope || null : null, price: f.price === '' ? null : Number(f.price), cost: f.cost === '' ? null : Number(f.cost), customCps: cps,
     }), `Engagement “${f.name}” created`);
     if (ok) nav('/engagements/status');
   };
@@ -60,21 +60,23 @@ export default function NewEngagement() {
           {strat && <div className="form-field"><label>Strategy sub-type</label><input list="subscopes" value={f.subScope} onChange={set('subScope')} /><datalist id="subscopes">{SUB_SCOPES_STRATEGY.map((s) => <option key={s} value={s} />)}</datalist></div>}
           <div className="form-field"><label>Project intensity</label><select value={f.workloadTier} onChange={set('workloadTier')}>{WORKLOAD_TIER_NAMES.map((t) => <option key={t} value={t}>{WORKLOAD_TIERS[t].icon} {t}</option>)}</select></div>
           <div className="form-field"><label>Start date</label><input type="date" value={f.start} onChange={set('start')} /></div>
-          <div className="form-field"><label>End date</label><input type="date" value={f.end} onChange={set('end')} /></div>
+          <div className="form-field"><label>Planned end date (optional)</label><input type="date" value={f.end} onChange={set('end')} />
+            <span className="small muted">Leave empty if not agreed — no end date is ever assumed.</span></div>
           <div className="form-field"><label>Initial stage</label><select value={f.stage} onChange={set('stage')}>{stages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select></div>
           <div className="form-field"><label>Selling price (optional)</label><input type="number" min={0} value={f.price} onChange={set('price')} /></div>
           <div className="form-field"><label>Cost (optional)</label><input type="number" min={0} value={f.cost} onChange={set('cost')} /></div>
 
           <div className="form-field full">
-            <label>📅 Critical path schedule</label>
+            <label>📅 Critical path schedule (CPS)</label>
             <div className="row small muted" style={{ marginBottom: 8 }}>
               <input type="file" accept=".csv,text/csv" onChange={(e) => e.target.files?.[0] && onCps(e.target.files[0])} />
-              Optional weekly plan (CSV: Activity, Start Week, End Week, Owner) — weeks count from the start date.
+              Upload the weekly plan (CSV: Activity, Start Week, End Week, Owner) — weeks count from the start date. Without it, no stage dates are set.
               {cps && <button type="button" className="btn btn-danger-outline btn-sm" onClick={() => { setCps(null); setCpsMsg(''); }}>Remove</button>}
             </div>
             {cpsMsg && <div className="small" style={{ marginBottom: 8 }}>{cpsMsg}</div>}
             <div className="card" style={{ background: 'var(--panel-2)', padding: '12px 14px' }}>
-              {datesOk ? <CpsBar model={model} e={{ start: f.start, end: f.end, scope: f.scope, stage: f.stage as never, customCps: cps }} /> : <div className="empty-state" style={{ padding: 14, color: 'var(--danger)' }}>The end date must be after the start date.</div>}
+              {!datesOk ? <div className="empty-state" style={{ padding: 14, color: 'var(--danger)' }}>{f.start ? 'The end date must be after the start date.' : 'Set a start date first.'}</div>
+                : <CpsBar model={model} e={{ start: f.start, end: f.end || null, scope: f.scope, stage: f.stage as never, customCps: cps }} />}
             </div>
           </div>
 

@@ -14,7 +14,7 @@ export default function Planner() {
           { name: 'Available capacity', color: '#4FC98A', data: months.map(() => 100) },
         ]} />
         <div className="box" style={{ marginTop: 16, fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.7 }}>
-          <b style={{ color: 'var(--text)' }}>Method:</b> demand sums each person's real allocation (by workload tier, role and any overrides) on every active engagement whose dates overlap the month, across {talentCount} Consulting and Pulse talents (Operations are excluded).<br />
+          <b style={{ color: 'var(--text)' }}>Method:</b> demand sums each person's real allocation (by workload tier, role and any overrides) on every active engagement running that month, across {talentCount} Consulting and Pulse talents (Operations are excluded). An engagement ends at its uploaded CPS or entered end date; one with neither counts until it is closed.<br />
           <b style={{ color: 'var(--warn)' }}>Assumption:</b> only engagements already scheduled are counted. New business will add demand, so treat a falling line as a floor, not a forecast.
         </div>
       </Card>

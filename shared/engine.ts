@@ -8,7 +8,7 @@ import {
   LEADER_CONCENTRATION_THRESHOLD, MONTHS, RECOMMENDATION_WEIGHTS, SUPERVISOR_ALLOCATION_PCT, TITLES, UTIL_BANDS,
   WORKLOAD_TIERS,
 } from './constants.js';
-import { health, parseDay, priority, scheduleInfo, stageLabel, type Health } from './schedule.js';
+import { health, knownEnd, parseDay, priority, scheduleInfo, stageLabel, type Health } from './schedule.js';
 import type { CapacityRule, Client, Engagement, Talent, WorkspaceData } from './types.js';
 
 export type UtilStatus = 'Not Allocated' | 'Underutilized' | 'Optimal' | 'At Capacity' | 'Overutilized';
@@ -129,6 +129,15 @@ export class Model {
     return 'active';
   }
 
+  /** When the engagement ends, as far as is known: the CPS / entered end date; for a finished
+      engagement with neither, the day it was closed. Live engagements with no known end run open-ended. */
+  endTime(e: Engagement): number {
+    const end = knownEnd(e);
+    if (end) return parseDay(end).getTime();
+    if (e.status === 'closed' || e.historical) return parseDay(e.updatedAt.slice(0, 10)).getTime();
+    return Infinity;
+  }
+
   // ---------- schedule ----------
   schedule(e: Engagement) { return scheduleInfo(e, this.now); }
   health(e: Engagement): Health { return health(e, this.now); }
@@ -204,8 +213,7 @@ export class Model {
     const overlapping = pool.filter((e) => {
       if (!this.involves(e, t.id)) return false;
       const s = parseDay(e.start).getTime();
-      const en = parseDay(e.end).getTime();
-      return s <= mEnd && en >= mStart;
+      return s <= mEnd && this.endTime(e) >= mStart;
     });
     if (kind === 'past' && !overlapping.length) return { value: null, kind };
     return { value: cap150(overlapping.reduce((s, e) => s + this.allocationPct(t.id, e), 0)), kind };
@@ -430,7 +438,7 @@ export class Model {
       const mEnd = Date.UTC(y, m + i + 1, 1) - 1;
       let demand = 0;
       this.active.forEach((e) => {
-        if (parseDay(e.end).getTime() < mStart || parseDay(e.start).getTime() > mEnd) return;
+        if (this.endTime(e) < mStart || parseDay(e.start).getTime() > mEnd) return;
         this.members(e).forEach((id) => { if (ids.has(id)) demand += this.allocationPct(id, e); });
       });
       const d = new Date(mStart);
@@ -474,8 +482,9 @@ export class Model {
   yearBuckets(year = this.now.getUTCFullYear()) {
     const isDone = (e: Engagement) => e.historical || e.status === 'closed';
     const yr = (s: string) => parseDay(s).getUTCFullYear();
-    const touching = this.engagements.filter((e) => yr(e.start) <= year && yr(e.end) >= year);
-    const done = this.engagements.filter((e) => isDone(e) && yr(e.end) === year);
+    const endYr = (e: Engagement) => { const t = this.endTime(e); return t === Infinity ? Infinity : new Date(t).getUTCFullYear(); };
+    const touching = this.engagements.filter((e) => yr(e.start) <= year && endYr(e) >= year);
+    const done = this.engagements.filter((e) => isDone(e) && endYr(e) === year);
     const active = touching.filter((e) => !isDone(e) && e.status !== 'paused');
     const yStart = Date.UTC(year, 0, 1);
     const yEnd = Date.UTC(year + 1, 0, 1);
@@ -542,13 +551,13 @@ export class Model {
       `UNALLOCATED: ${or(t.filter((x) => x.utilStatus === 'Not Allocated').map((x) => `${x.name} (${x.title}, ${x.department})`).join('; '))}`,
       `UNDERSTAFFED (lead only): ${or(e.filter((x) => x.teamIds.length <= 1).map((x) => `${x.name} (${x.client}, lead ${this.name(x.leadId)})`).join('; '))}`,
       `CLOSING SOON: ${or(e.filter((x) => this.health(x) === 'About to Close').map((x) => `${x.name} (${x.client})`).join('; '))}`,
-      `DELAYED: ${or(e.filter((x) => this.health(x) === 'Delayed').map((x) => `${x.name} (ended ${x.end})`).join('; '))}`,
+      `DELAYED: ${or(e.filter((x) => this.health(x) === 'Delayed').map((x) => `${x.name} (due ${knownEnd(x)})`).join('; '))}`,
       `HIRING GAPS (title × department averaging ≥100%): ${or(hiring.map((h) => `${h.title} in ${h.department} — ${h.avgUtil}% avg, ${h.urgency}, ~${h.fteGap} FTE`).join('; '))}`,
       `REPEATED PAIRINGS (active work): ${or(rot.repeatPairs.map((p) => `${p.aName} + ${p.bName} (${p.count}: ${p.engagements.join(', ')})`).join('; '))}`,
       `LEADERS ON ${LEADER_CONCENTRATION_THRESHOLD}+ ENGAGEMENTS: ${or(rot.concentratedLeaders.map((l) => `${l.name} (${l.count}: ${l.engagements.join(', ')})`).join('; '))}`,
       `TOP CLIENTS BY ACTIVE ENGAGEMENTS: ${or(clients.slice(0, 5).map((c) => `${c.name} (${c.active})`).join(', '))}`,
       `ROSTER: ${t.map((x) => `${x.name} [${x.title}, ${x.department}, ${x.util}% ${x.utilStatus}, ${x.engagementCount}/${x.projectCapacity} engagements]`).join(' | ')}`,
-      `ACTIVE ENGAGEMENTS: ${e.map((x) => `${x.name} [${x.client}, ${x.sector}, ${x.scope}, stage ${stageLabel(x.stage)}, lead ${this.name(x.leadId)}, team ${x.teamIds.map((id) => this.name(id)).join('/')}, ${x.start}→${x.end}, ${this.health(x)}, ${x.workloadTier}]`).join(' | ')}`,
+      `ACTIVE ENGAGEMENTS: ${e.map((x) => `${x.name} [${x.client}, ${x.sector}, ${x.scope}, stage ${stageLabel(x.stage)}, lead ${this.name(x.leadId)}, team ${x.teamIds.map((id) => this.name(id)).join('/')}, started ${x.start}, ${knownEnd(x) ? 'ends ' + knownEnd(x) : 'no end date set'}, ${x.customCps?.length ? 'CPS uploaded' : 'no CPS uploaded'}, ${this.health(x)}, ${x.workloadTier}]`).join(' | ')}`,
     ].join('\n\n');
   }
 }

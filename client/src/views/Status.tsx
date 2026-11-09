@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { LIFECYCLE } from '../../../shared/constants';
-import { HEALTH_VALUES, stageLabel } from '../../../shared/schedule';
+import { HEALTH_VALUES, knownEnd, stageLabel } from '../../../shared/schedule';
 import type { Engagement } from '../../../shared/types';
 import { Bars } from '../components/charts';
 import { EngagementListModal, EngagementModal } from '../components/modals';
@@ -32,7 +32,7 @@ export default function Status() {
     return true;
   });
   if (sort === 'lead') rows = [...rows].sort((a, c) => m.name(a.leadId).localeCompare(m.name(c.leadId)) || a.name.localeCompare(c.name));
-  if (sort === 'end') rows = [...rows].sort((a, c) => a.end.localeCompare(c.end));
+  if (sort === 'end') rows = [...rows].sort((a, c) => (knownEnd(a) ?? '9999').localeCompare(knownEnd(c) ?? '9999'));
   rows = [...rows].sort((a, c) => Number(m.health(a) === 'Complete') - Number(m.health(c) === 'Complete'));
   const doAction = (e: Engagement, action: string, msg: string, confirm?: string) => {
     const run = () => act(() => api.post(`/engagements/${e.id}/${action}`), msg);
@@ -93,7 +93,7 @@ export default function Status() {
                       <td>{e.client}</td><td>{stageLabel(e.stage)}</td><td>{m.name(e.leadId)}</td>
                       <td>{bucket === 'active' ? <Tag className={healthClass(h)}>{h}</Tag> : '—'}</td>
                       <td>{bucket === 'active' ? <Tag className={priorityClass(m.priority(e))}>{m.priority(e)}</Tag> : '—'}</td>
-                      <td>{bucket !== 'active' || !info ? '—' : info.isComplete ? <Tag className="tag-ok">✅ Complete</Tag> : <Tag className={info.daysLeft < 0 ? 'tag-danger' : info.closingSoon ? 'tag-warn' : 'tag-neutral'}>{info.daysLeft < 0 ? `${-info.daysLeft}d overdue` : `${info.daysLeft}d left`}</Tag>}</td>
+                      <td>{bucket !== 'active' || !info ? '—' : info.isComplete ? <Tag className="tag-ok">✅ Complete</Tag> : info.daysLeft === null ? <span className="small muted">No end date</span> : <Tag className={info.daysLeft < 0 ? 'tag-danger' : info.closingSoon ? 'tag-warn' : 'tag-neutral'}>{info.daysLeft < 0 ? `${-info.daysLeft}d overdue` : `${info.daysLeft}d left`}</Tag>}{bucket === 'active' && <div className="small muted">{e.customCps?.length ? '📤 CPS' : 'No CPS'}</div>}</td>
                       {canEdit && (
                         <td onClick={(x) => x.stopPropagation()}>
                           {bucket === 'historical' ? <span className="small muted">Read only</span> : (

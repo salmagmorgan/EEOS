@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { LIFECYCLE } from '../../../shared/constants';
-import { parseDay } from '../../../shared/schedule';
 import { PHASE_COLORS, StageStrip } from '../components/charts';
 import { EngagementListModal, EngagementModal } from '../components/modals';
 import { Card, Empty, PageHead, fmtDate, useModal } from '../components/ui';
@@ -21,7 +20,11 @@ export default function Lifecycle() {
   const mo = m.now.getUTCMonth();
   const minT = Date.UTC(y, mo - 1 + offset, 1);
   const maxT = Date.UTC(y, mo + 11 + offset, 1) - 1;
-  let list = m.active.filter((e) => (!who || m.involves(e, who)) && parseDay(e.end).getTime() >= minT && parseDay(e.start).getTime() <= maxT);
+  const mine = m.active.filter((e) => !who || m.involves(e, who));
+  // Only an uploaded CPS gives a project dated phases — nothing is drawn from estimates.
+  const withCps = mine.filter((e) => e.customCps?.length);
+  const withoutCps = mine.filter((e) => !e.customCps?.length);
+  let list = withCps.filter((e) => { const i = m.schedule(e)!; return i.end!.getTime() >= minT && i.start.getTime() <= maxT; });
   if (only) list = list.filter((e) => e.id === only);
   const scoped = who ? m.active.filter((e) => m.involves(e, who)) : m.active;
   const counts = Object.fromEntries(LIFECYCLE.map((s) => [s.id, scoped.filter((e) => e.stage === s.id).length]));
@@ -39,7 +42,7 @@ export default function Lifecycle() {
 
   return (
     <>
-      <PageHead title="Engagement Lifecycle" desc="Every active engagement, week by week, across a rolling twelve-month window — which phase it is in and where it sits on the calendar." />
+      <PageHead title="Engagement Lifecycle" desc="Active engagements with an uploaded CPS, week by week across a rolling twelve-month window. Engagements without a CPS are listed below the chart — their phases are never estimated." />
       <Card title="Engagement timeline (by phase)" sub={
         <select className="inline-input" value={who} onChange={(e) => { setWho(e.target.value); setOnly(null); }}>
           <option value="">All team members</option>{m.talents.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -93,7 +96,7 @@ export default function Lifecycle() {
               }))}
             </svg>
           </div>
-        ) : <Empty>No active engagements fall in this window. Use ← Earlier / Later →.</Empty>}
+        ) : <Empty>{withCps.length ? 'No uploaded CPS falls in this window. Use ← Earlier / Later →.' : 'No active engagement has a CPS uploaded yet. Open an engagement → Schedule tab to upload its weekly plan.'}</Empty>}
         <div className="row" style={{ marginTop: 12, gap: 6 }}>
           {LIFECYCLE.map((s) => (
             <button key={s.id} className="tab" style={{ fontSize: 10, padding: '3px 9px', borderRadius: 20 }} onClick={() => openPhase(s.id)}>
@@ -101,6 +104,14 @@ export default function Lifecycle() {
             </button>
           ))}
         </div>
+      </Card>
+      <Card title={`📅 No CPS uploaded yet (${withoutCps.length})`} style={{ marginBottom: 16 }}>
+        <div className="small muted" style={{ marginBottom: 8 }}>These engagements have no dated phases until their weekly plan is uploaded. Click one, then open its Schedule tab.</div>
+        {withoutCps.length ? (
+          <div className="row" style={{ gap: 6 }}>
+            {withoutCps.map((e) => <button key={e.id} className="tab" onClick={() => modal.open(<EngagementModal id={e.id} />)}>{e.name} <span className="muted">· {LIFECYCLE.find((s) => s.id === e.stage)?.label}</span></button>)}
+          </div>
+        ) : <Empty>Every active engagement has a CPS uploaded.</Empty>}
       </Card>
       <Card title="Projects per phase"><div style={{ overflowX: 'auto' }}><StageStrip counts={counts} onPick={openPhase} /></div></Card>
     </>

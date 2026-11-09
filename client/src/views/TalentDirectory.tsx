@@ -15,7 +15,7 @@ export default function TalentDirectory() {
   const rows = m.talents.filter((t) => (!q || (t.name + ' ' + t.title).toLowerCase().includes(q.toLowerCase())) && (!dept || t.department === dept) && (!sector || t.sectors.includes(sector)) && (!status || t.utilStatus === status));
   return (
     <>
-      <PageHead title="Talent Directory" desc={`${m.talents.length} people on the roster — ${DEPARTMENTS.map((d) => `${d}: ${m.talents.filter((t) => t.department === d).length}`).join(' · ')}`} />
+      <PageHead title="Talent Directory" desc={`${m.talents.length} people on the roster — ${DEPARTMENTS.map((d) => `${d}: ${m.talents.filter((t) => t.department === d).length}`).join(' · ')}. Click anyone to see their weight on each project.`} />
       <div className="filters-bar">
         <input type="text" placeholder="Search name or title…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select value={dept} onChange={(e) => setDept(e.target.value)}><option value="">All departments</option>{DEPARTMENTS.map((d) => <option key={d}>{d}</option>)}</select>

@@ -122,7 +122,8 @@ The web app downloads the whole workspace once (it's small: tens of people, a fe
 ### Business rules (unchanged from the prototype)
 
 - **Utilization** = the sum of a person's allocation on each *active* engagement (paused, closed, deleted and historical engagements never count). Allocation comes from the engagement's workload tier — Quick Work 25%, Business as Usual 35%, Heavy & Complex 50% (65% for the lead) — a flat 15% for a supervisor, or a manual override. Bands: Underutilized < 75%, Optimal 75–90%, At Capacity 91–100%, Overutilized > 100%.
-- **Health** is computed, never stored: Complete (final stage of its scope), Delayed (past end date), About to Close (final stage, ≤ 14 days left or ≥ 85% elapsed), Just Opened (< 20% elapsed), otherwise Midway. **Priority**: High if delayed or lead-only; Low if just opened; otherwise Medium.
+- **No assumed timelines.** Stage dates come only from an uploaded CPS (weekly plan); an end date only from the CPS or a date someone actually entered. Engagements with neither show "No CPS uploaded" / "No end date" and count as running until closed.
+- **Health** is computed, never stored: Complete (final stage of its scope), Delayed (past its known end), About to Close (final stage, ≤ 14 days left or ≥ 85% elapsed), Just Opened (< 20% elapsed — or, with no time frame, still in the first stage), otherwise Midway. **Priority**: High if delayed or lead-only; Low if just opened; otherwise Medium.
 - **Recommendations** score capacity 30%, fair rotation 25%, scope experience 25%, sector experience 20%; directors and Operations are excluded.
 - **Hiring gaps** appear for title × department groups averaging ≥ 100% utilization.
 
@@ -132,6 +133,8 @@ These live in `shared/constants.ts` and `shared/engine.ts`; change them there an
 
 - Engagements reference people by ID, so renaming someone no longer breaks their history.
 - Engagement details (name, client, dates, scope, notes) are editable after creation.
+- Each person's card shows their **project weights**: their allocation on every active project, adding up to their utilization; editors can adjust any weight there.
+- The importer drops end dates the prototype estimated (its form silently filled blank end dates with today + 90/75/120 days).
 - Paused engagements have their own filter everywhere; deleted ones can be restored from Data Management.
 - Hiring Forecast's note now matches its rule (≥ 100%; the prototype's text said 90%).
 - Capacity Planner only counts an engagement in months its dates actually overlap.

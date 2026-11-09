@@ -103,7 +103,9 @@ function pgPool(url: string): PgLike {
   };
 }
 
-const MIGRATIONS: string[] = [
+/** Schema migrations, in order. A plain string runs on both databases (adapted for Postgres);
+    an object gives each database its own statements. */
+const MIGRATIONS: (string | { sqlite: string; postgres: string })[] = [
   `
   CREATE TABLE users (
     id TEXT PRIMARY KEY,
@@ -205,6 +207,45 @@ const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS audit_entity ON audit_log(entity_type, entity_id);
   CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `,
+  // 2: end dates are optional (never estimated); clear the estimates the prototype importer filled in.
+  {
+    sqlite: `
+  CREATE TABLE engagements_v2 (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    client TEXT NOT NULL,
+    country TEXT NOT NULL,
+    sector TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    sub_scope TEXT,
+    stage TEXT NOT NULL,
+    lead_id TEXT NOT NULL,
+    team_ids TEXT NOT NULL,
+    supervisor_id TEXT,
+    start_date TEXT NOT NULL,
+    end_date TEXT,
+    notes TEXT NOT NULL DEFAULT '',
+    workload_tier TEXT NOT NULL,
+    custom_cps TEXT,
+    price REAL,
+    cost REAL,
+    status TEXT NOT NULL CHECK (status IN ('active','paused','closed','deleted')),
+    historical INTEGER NOT NULL DEFAULT 0,
+    allocation_overrides TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );;
+  INSERT INTO engagements_v2 SELECT * FROM engagements;
+  DROP TABLE engagements;
+  ALTER TABLE engagements_v2 RENAME TO engagements;
+  CREATE INDEX IF NOT EXISTS engagements_status ON engagements(status);
+  UPDATE engagements SET end_date = NULL WHERE historical = 0 AND id LIKE 'e%' AND id NOT LIKE 'eng%'
+  `,
+    postgres: `
+  ALTER TABLE engagements ALTER COLUMN end_date DROP NOT NULL;
+  UPDATE engagements SET end_date = NULL WHERE historical = 0 AND id LIKE 'e%' AND id NOT LIKE 'eng%'
+  `,
+  },
 ];
 
 /** Postgres flavour of the schema: same tables and columns, Postgres types. */
@@ -234,7 +275,7 @@ export const insertionOrder = (db: DB) => (db.dialect === 'postgres' ? 'seq' : '
 /** Apply any pending schema migrations. Safe to run on every cold start. */
 export async function migrate(db: DB): Promise<void> {
   await db.execute('CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
-  const ddl = db.dialect === 'postgres' ? MIGRATIONS.map(pgDdl) : MIGRATIONS;
+  const ddl = MIGRATIONS.map((m) => (typeof m === 'string' ? (db.dialect === 'postgres' ? pgDdl(m) : m) : m[db.dialect]));
   const done = new Set((await db.execute('SELECT version FROM _migrations')).rows.map((r) => Number(r.version)));
   for (let v = 0; v < MIGRATIONS.length; v++) {
     if (done.has(v + 1)) continue;

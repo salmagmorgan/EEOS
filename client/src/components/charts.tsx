@@ -155,18 +155,39 @@ export function Heatmap({ model, talents, onPick }: { model: Model; talents: Der
 export function CpsBar({ model, e }: { model: Model; e: Pick<Engagement, 'start' | 'end' | 'scope' | 'stage' | 'customCps'> }) {
   const [picked, setPicked] = useState<ScheduledStage | null>(null);
   const info = model.schedule(e as Engagement);
-  if (!info) return <div className="empty-state" style={{ padding: 14 }}>Add a start and end date to generate the Critical Path Schedule.</div>;
-  const total = Math.max(1, info.end.getTime() - info.start.getTime());
+  if (!info) return <div className="empty-state" style={{ padding: 14 }}>Add a start date first.</div>;
   const idx = info.stages.findIndex((s) => s.id === e.stage);
   const meta = info.stages[info.stages.length - 1];
+  const timing = info.daysLeft === null ? 'No end date set' : info.daysLeft >= 0 ? `${info.daysLeft} days left` : `${-info.daysLeft} days overdue`;
   const status = info.isComplete
     ? <b style={{ color: 'var(--ok)' }}>✅ Complete — closed at {meta.label}</b>
-    : <>{info.closingSoon && <b style={{ color: 'var(--warn)' }}>⚠ Closing soon · </b>}{info.daysLeft >= 0 ? `${info.daysLeft} days left` : `${-info.daysLeft} days overdue`}</>;
+    : <>{info.closingSoon && <b style={{ color: 'var(--warn)' }}>⚠ Closing soon · </b>}{timing}</>;
+  const stageLine = (
+    <div style={{ fontSize: 9.5, color: 'var(--text-faint)', marginTop: 4 }}>
+      Current stage: <b style={{ color: 'var(--text-dim)' }}>{LIFECYCLE.find((s) => s.id === e.stage)?.label ?? e.stage}</b> — <i>{LIFECYCLE.find((s) => s.id === e.stage)?.details}</i>
+    </div>
+  );
+  // No CPS uploaded: show what is actually known, never an estimated stage plan.
+  if (!info.isCustomSchedule) {
+    return (
+      <div style={{ marginTop: 4 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginBottom: 6, gap: 8 }}>
+          <span>Started {fmtDate(info.start)}</span><span>{status}</span><span>{info.end ? 'Planned end ' + fmtDate(info.end) : ''}</span>
+        </div>
+        <div style={{ border: '1px dashed var(--border)', borderRadius: 8, padding: '10px 12px', fontSize: 11.5, color: 'var(--text-dim)' }}>
+          📅 <b>No CPS uploaded yet</b> — stage dates appear here once the weekly plan is uploaded (Schedule tab). Nothing is estimated.
+        </div>
+        {stageLine}
+      </div>
+    );
+  }
+  const end = info.end!;
+  const total = Math.max(1, end.getTime() - info.start.getTime());
   return (
     <div style={{ marginTop: 4 }}>
-      {info.isCustomSchedule && <div style={{ fontSize: 10, color: 'var(--ok)', marginBottom: 5 }}>📤 Using the uploaded weekly plan, not the auto-projected schedule.</div>}
+      <div style={{ fontSize: 10, color: 'var(--ok)', marginBottom: 5 }}>📤 From the uploaded CPS.</div>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginBottom: 5, gap: 8 }}>
-        <span>{fmtDate(info.start)}</span><span>{status}</span><span>{fmtDate(info.end)}</span>
+        <span>{fmtDate(info.start)}</span><span>{status}</span><span>{fmtDate(end)}</span>
       </div>
       <div style={{ display: 'flex', height: 16, borderRadius: 6, overflow: 'hidden', position: 'relative', background: '#1B2138' }}>
         {info.cps.map((s, i) => {
@@ -181,11 +202,9 @@ export function CpsBar({ model, e }: { model: Model; e: Pick<Engagement, 'start'
                 outline: state === 'current' ? '1.5px solid #fff' : undefined, outlineOffset: -2 }} />
           );
         })}
-        <div title="Today" style={{ position: 'absolute', left: `${info.pctElapsed}%`, top: 0, bottom: 0, width: 2, background: '#fff', boxShadow: '0 0 6px #fff' }} />
+        <div title="Today" style={{ position: 'absolute', left: `${info.pctElapsed ?? 0}%`, top: 0, bottom: 0, width: 2, background: '#fff', boxShadow: '0 0 6px #fff' }} />
       </div>
-      <div style={{ fontSize: 9.5, color: 'var(--text-faint)', marginTop: 4 }}>
-        Current stage: <b style={{ color: 'var(--text-dim)' }}>{LIFECYCLE.find((s) => s.id === e.stage)?.label ?? e.stage}</b> — <i>{LIFECYCLE.find((s) => s.id === e.stage)?.details}</i>
-      </div>
+      {stageLine}
       {picked && (
         <div className="box" style={{ marginTop: 8, fontSize: 11.5 }}>
           <b>{picked.label}</b> · {fmtDate(picked.start, { day: '2-digit', month: 'short' })} – {fmtDate(picked.end, { day: '2-digit', month: 'short' })}{picked.owner ? ` · Owner: ${picked.owner}` : ''}

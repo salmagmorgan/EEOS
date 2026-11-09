@@ -200,10 +200,12 @@ function ScheduleTab({ e, editable }: { e: Engagement; editable: boolean }) {
   return (
     <>
       <CpsBar model={model} e={e} />
-      <table className="data" style={{ marginTop: 12 }}>
-        <thead><tr><th>Stage</th><th>Start</th><th>End</th><th>Owner</th></tr></thead>
-        <tbody>{model.schedule(e)?.cps.map((s) => <tr key={s.id} style={{ cursor: 'default' }}><td>{s.label}</td><td>{fmtDate(s.start)}</td><td>{fmtDate(s.end)}</td><td>{s.owner ?? '—'}</td></tr>)}</tbody>
-      </table>
+      {!!e.customCps?.length && (
+        <table className="data" style={{ marginTop: 12 }}>
+          <thead><tr><th>Stage</th><th>Start</th><th>End</th><th>Owner</th></tr></thead>
+          <tbody>{model.schedule(e)?.cps.map((s) => <tr key={s.id} style={{ cursor: 'default' }}><td>{s.label}</td><td>{fmtDate(s.start)}</td><td>{fmtDate(s.end)}</td><td>{s.owner ?? '—'}</td></tr>)}</tbody>
+        </table>
+      )}
       {editable && (
         <div className="box" style={{ marginTop: 12 }}>
           <div className="small muted" style={{ marginBottom: 6 }}>
@@ -211,7 +213,7 @@ function ScheduleTab({ e, editable }: { e: Engagement; editable: boolean }) {
           </div>
           <div className="row">
             <input type="file" accept=".csv,text/csv" onChange={(x) => x.target.files?.[0] && onFile(x.target.files[0])} />
-            {e.customCps && <button className="btn btn-danger-outline btn-sm" onClick={() => act(() => api.put(`/engagements/${e.id}/cps`, { stages: null }), 'Back to the auto-projected schedule')}>Remove upload</button>}
+            {e.customCps && <button className="btn btn-danger-outline btn-sm" onClick={() => act(() => api.put(`/engagements/${e.id}/cps`, { stages: null }), 'CPS removed — no stage dates until a new one is uploaded')}>Remove CPS</button>}
           </div>
           {msg && <div className="small" style={{ marginTop: 6 }}>{msg}</div>}
         </div>
@@ -222,7 +224,7 @@ function ScheduleTab({ e, editable }: { e: Engagement; editable: boolean }) {
 
 function DetailsTab({ e, editable }: { e: Engagement; editable: boolean }) {
   const { act } = useWorkspace();
-  const [f, setF] = useState({ name: e.name, client: e.client, country: e.country, sector: e.sector, scope: e.scope, subScope: e.subScope ?? '', start: e.start, end: e.end, notes: e.notes });
+  const [f, setF] = useState({ name: e.name, client: e.client, country: e.country, sector: e.sector, scope: e.scope, subScope: e.subScope ?? '', start: e.start, end: e.end ?? '', notes: e.notes });
   const set = (k: keyof typeof f) => (x: { target: { value: string } }) => setF({ ...f, [k]: x.target.value });
   const strat = f.scope === 'Strategy' || f.scope === 'Research and Strategy';
   return (
@@ -235,12 +237,87 @@ function DetailsTab({ e, editable }: { e: Engagement; editable: boolean }) {
         <div className="form-field"><label>Scope</label><select value={f.scope} onChange={set('scope')}>{SCOPES.map((s) => <option key={s}>{s}</option>)}</select></div>
         {strat && <div className="form-field"><label>Strategy sub-type</label><input value={f.subScope} onChange={set('subScope')} /></div>}
         <div className="form-field"><label>Start</label><input type="date" value={f.start} onChange={set('start')} /></div>
-        <div className="form-field"><label>End</label><input type="date" value={f.end} onChange={set('end')} /></div>
+        <div className="form-field"><label>Planned end (optional)</label><input type="date" value={f.end} onChange={set('end')} />
+          <span className="small muted">Leave empty if not agreed yet — no end date is ever assumed.</span></div>
         <div className="form-field full"><label>Notes</label><textarea value={f.notes} onChange={set('notes')} /></div>
       </div>
       {f.scope !== e.scope && <div className="small" style={{ color: 'var(--warn)', marginTop: 8 }}>Changing scope resets an uploaded schedule and may move the stage back to kickoff.</div>}
-      {editable && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={() => act(() => api.patch(`/engagements/${e.id}`, { ...f, subScope: strat ? f.subScope || null : null }), 'Details saved')}>Save details</button>}
+      {editable && <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={() => act(() => api.patch(`/engagements/${e.id}`, { ...f, end: f.end || null, subScope: strat ? f.subScope || null : null }), 'Details saved')}>Save details</button>}
     </fieldset>
+  );
+}
+
+// ---------------- project weights ----------------
+const WEIGHT_COLORS = ['#6C68D6', '#4FC98A', '#F47381', '#B1A7DA', '#D48806', '#3BA4D8', '#E26CC5', '#9BD25B'];
+
+/** One person's weight (allocation %) on each active project, summing to their utilization. */
+export function ProjectWeights({ talentId }: { talentId: string }) {
+  const { model, canEdit, act } = useWorkspace();
+  const modal = useModal();
+  const t = model.talent(talentId);
+  if (!t) return null;
+  const rows = model.active.filter((e) => model.involves(e, t.id)).map((e, i) => ({
+    e,
+    pct: model.allocationPct(t.id, e),
+    overridden: e.allocationOverrides[t.id] !== undefined,
+    role: e.leadId === t.id ? 'Lead' : e.supervisorId === t.id && !e.teamIds.includes(t.id) ? 'Supervisor' : 'Member',
+    color: WEIGHT_COLORS[i % WEIGHT_COLORS.length],
+  })).sort((a, b) => b.pct - a.pct);
+  const total = rows.reduce((sum, r) => sum + r.pct, 0);
+  const scale = Math.max(100, total);
+  return (
+    <>
+      <div className="sub-label">Project weights — {rows.length} active project{rows.length !== 1 && 's'}</div>
+      {rows.length ? (
+        <>
+          <div style={{ position: 'relative', display: 'flex', height: 14, borderRadius: 6, overflow: 'hidden', background: '#1B2138', marginBottom: 4 }}>
+            {rows.map((r) => <div key={r.e.id} title={`${r.e.name}: ${r.pct}%`} style={{ width: (r.pct / scale) * 100 + '%', background: r.color, borderRight: '1px solid #0A0D18' }} />)}
+            {total > 100 && <div title="100% capacity" style={{ position: 'absolute', left: (100 / scale) * 100 + '%', top: 0, bottom: 0, width: 2, background: '#fff' }} />}
+          </div>
+          <div className="small muted" style={{ marginBottom: 8 }}>{total > 100 ? `White line = 100% capacity — ${total - 100}% over.` : `${100 - total}% capacity free.`}</div>
+          <table className="data">
+            <thead><tr><th>Project</th><th>Role</th><th>Intensity</th><th style={{ textAlign: 'right' }}>Weight</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.e.id} onClick={() => modal.open(<EngagementModal id={r.e.id} />)}>
+                  <td><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: r.color, marginRight: 7 }} /><b>{r.e.name}</b><div className="small muted">{r.e.client} · {stageLabel(r.e.stage)}</div></td>
+                  <td>{r.role}</td>
+                  <td className="small">{WORKLOAD_TIERS[r.e.workloadTier].icon} {r.e.workloadTier}</td>
+                  <td style={{ textAlign: 'right' }} onClick={(x) => x.stopPropagation()}>
+                    {canEdit ? (
+                      <WeightInput value={r.pct} overridden={r.overridden}
+                        onSave={(v) => act(() => api.put(`/engagements/${r.e.id}/allocations/${t.id}`, { pct: v }), `${t.name}'s weight on ${r.e.name} set to ${v}%`)}
+                        onClear={() => act(() => api.put(`/engagements/${r.e.id}/allocations/${t.id}`, { pct: null }), 'Back to the intensity default')} />
+                    ) : <b>{r.pct}%{r.overridden && ' ✋'}</b>}
+                  </td>
+                </tr>
+              ))}
+              <tr style={{ cursor: 'default' }}>
+                <td colSpan={3}><b>Total = utilization</b>{t.utilOverride && <span className="small" style={{ color: 'var(--warn)' }}> (manually set to {t.utilOverride.value}%)</span>}</td>
+                <td style={{ textAlign: 'right' }}><b style={{ color: statusColor(t.utilStatus) }}>{total}%</b></td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="small muted" style={{ marginTop: 6, lineHeight: 1.5 }}>
+            Default weights come from each project's intensity and the person's role (Quick Work 25% · Business as Usual 35% · Heavy &amp; Complex 50%, 65% for the lead · supervisors 15%). ✋ = adjusted by hand{canEdit ? '; click ✋ to go back to the default' : ''}.
+          </div>
+        </>
+      ) : <Empty>Not on any active project right now.</Empty>}
+    </>
+  );
+}
+
+function WeightInput({ value, overridden, onSave, onClear }: { value: number; overridden: boolean; onSave: (v: number) => void; onClear: () => void }) {
+  const [v, setV] = useState(String(value));
+  useEffect(() => setV(String(value)), [value]);
+  const commit = () => { const n = Math.max(0, Math.min(100, Math.round(Number(v) || 0))); if (n !== value) onSave(n); else setV(String(value)); };
+  return (
+    <span style={{ whiteSpace: 'nowrap' }}>
+      <input type="number" min={0} max={100} value={v} aria-label="Weight %" onChange={(e) => setV(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+        style={{ width: 56, background: 'var(--panel-2)', border: `1px solid ${overridden ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 6, color: 'var(--text)', padding: '4px 6px', fontSize: 12, textAlign: 'right' }} />%
+      {overridden && <span title="Adjusted by hand — click to use the default" style={{ color: 'var(--accent)', cursor: 'pointer', marginLeft: 3 }} onClick={onClear}>✋</span>}
+    </span>
   );
 }
 
@@ -257,7 +334,6 @@ export function TalentModal({ id }: { id: string }) {
   }
   const year = model.now.getUTCFullYear();
   const months = Array.from({ length: 12 }, (_, m) => model.talentMonthUtil(t, year, m));
-  const active = model.active.filter((e) => model.involves(e, t.id));
   return (
     <ModalFrame title={t.name} footer={canEdit && (
       <>
@@ -285,21 +361,17 @@ export function TalentModal({ id }: { id: string }) {
         Utilization = the sum of this person's allocation on each active engagement (by workload tier and role, or a manual override) — currently {t.computedUtil}%.
         {t.utilOverride && <><br /><b style={{ color: 'var(--warn)' }}>✋ Manually set to {t.utilOverride.value}%</b> by {t.utilOverride.by} on {fmtDate(t.utilOverride.at)}{t.utilOverride.reason && ` — “${t.utilOverride.reason}”`}.</>}
       </div>
-      <div className="sub-label">Current engagements</div>
-      {active.length ? active.map((e) => (
-        <ListRow key={e.id} title={<>{e.name}{e.leadId === t.id && <span style={{ color: 'var(--accent)', fontSize: 9.5 }}> · Lead</span>}{e.supervisorId === t.id && <span style={{ color: 'var(--lavender)', fontSize: 9.5 }}> · Supervisor</span>}</>}
-          desc={`${e.client} · ${stageLabel(e.stage)} · ${model.allocationPct(t.id, e)}%`} right={<Tag className={healthClass(model.health(e))}>{model.health(e)}</Tag>}
-          onClick={() => modal.open(<EngagementModal id={e.id} />)} />
-      )) : <Empty>Not staffed on any active engagement.</Empty>}
+      <ProjectWeights talentId={t.id} />
+      {canEdit && <div className="sub-label">Override total utilization (rarely needed)</div>}
       {canEdit && (
-        <div className="row" style={{ margin: '12px 0' }}>
+        <div className="row" style={{ margin: '0 0 12px' }}>
           <input className="inline-input" type="number" min={0} max={200} placeholder="Manual %" value={override} onChange={(x) => setOverride(x.target.value)} style={{ width: 100 }} />
           <input className="inline-input" placeholder="Reason (optional)" value={reason} onChange={(x) => setReason(x.target.value)} style={{ flex: 1, minWidth: 120 }} />
           <button className="btn btn-sm" disabled={override === ''} onClick={() => act(() => api.put(`/talents/${t.id}/utilization-override`, { value: Number(override), reason }), 'Utilization overridden')}>Set manual</button>
           {t.utilOverride && <button className="btn btn-ghost btn-sm" onClick={() => act(() => api.put(`/talents/${t.id}/utilization-override`, { value: null }), 'Back to computed utilization')}>Revert</button>}
         </div>
       )}
-      <div className="sub-label">{year} utilization — past months from real engagement dates, future months projected</div>
+      <div className="sub-label">{year} utilization — past months from real project dates; ahead, active projects count until their end date (or until closed, if none is set)</div>
       <LineChart labels={['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']} series={[{ name: 'Utilization %', color: '#6C68D6', data: months.map((m) => m.value) }]} />
     </ModalFrame>
   );
@@ -408,7 +480,7 @@ export function ClientModal({ id }: { id: string }) {
       <div className="sub-label">Active engagements</div>
       {active.length ? active.map((e) => <ListRow key={e.id} title={e.name} desc={`${stageLabel(e.stage)} · Lead: ${model.name(e.leadId)}`} right={<Tag className={healthClass(model.health(e))}>{model.health(e)}</Tag>} onClick={() => modal.open(<EngagementModal id={e.id} />)} />) : <Empty>No active engagements.</Empty>}
       <div className="sub-label">Past engagements</div>
-      {past.length ? past.map((e) => <ListRow key={e.id} title={e.name} desc={`${e.scope} · Lead: ${model.name(e.leadId)} · ${fmtDate(e.end, { month: 'short', year: 'numeric' })}`} right={<Tag className="tag-neutral">{e.historical ? '📁 Historical' : '🔒 Closed'}</Tag>} onClick={() => modal.open(<EngagementModal id={e.id} />)} />) : <Empty>None on record.</Empty>}
+      {past.length ? past.map((e) => <ListRow key={e.id} title={e.name} desc={`${e.scope} · Lead: ${model.name(e.leadId)}${e.end ? ' · ' + fmtDate(e.end, { month: 'short', year: 'numeric' }) : ''}`} right={<Tag className="tag-neutral">{e.historical ? '📁 Historical' : '🔒 Closed'}</Tag>} onClick={() => modal.open(<EngagementModal id={e.id} />)} />) : <Empty>None on record.</Empty>}
       <div className="sub-label">Who has worked with {c.name}</div>
       {people.map((p) => <ListRow key={p.id} icon={<Avatar text={model.talentById.get(p.id)?.initials ?? '?'} size={22} />} title={p.name} desc={p.projects.slice(0, 3).join(', ') + (p.projects.length > 3 ? ` +${p.projects.length - 3} more` : '')} right={<Tag className="tag-neutral">{p.projects.length}</Tag>} onClick={() => model.talent(p.id) && modal.open(<TalentModal id={p.id} />)} />)}
     </ModalFrame>

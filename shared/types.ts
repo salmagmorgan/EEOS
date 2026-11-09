@@ -64,7 +64,8 @@ export interface Engagement {
   teamIds: string[];
   supervisorId: string | null;
   start: string; // YYYY-MM-DD
-  end: string;
+  /** Planned end date — only when someone actually entered one (or the staffing history shows it). */
+  end: string | null;
   notes: string;
   workloadTier: WorkloadTier;
   customCps: CpsStage[] | null;

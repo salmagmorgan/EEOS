@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { SCOPE_STAGES, STAGE_IDS, WORKLOAD_TIER_NAMES, type StageId, type WorkloadTier } from '../../shared/constants.js';
 import { initialsOf } from '../../shared/engine.js';
-import { addDays, scopeStages, toDay } from '../../shared/schedule.js';
+import { scopeStages, toDay } from '../../shared/schedule.js';
 import type { CapacityRule, Client, CpsStage, Engagement, SeedFile, Talent, TrajectoryRow } from '../../shared/types.js';
 
 type Literal = any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -49,7 +49,6 @@ function evalLiteral(code: string): Literal {
 }
 
 const MONTH_NUM: Record<string, number> = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
-const TYPE_DAYS: Record<string, number> = { Research: 90, Strategy: 75, Execution: 120 };
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 export function seedFromArtifact(html: string, opts: { store?: Literal; now?: Date; anonymize?: boolean } = {}): SeedFile {
@@ -127,19 +126,34 @@ export function seedFromArtifact(html: string, opts: { store?: Literal; now?: Da
     const scope = SCOPE_STAGES[src.realScope as keyof typeof SCOPE_STAGES] ? src.realScope : 'Research';
     const stages = scopeStages(scope).map((s) => s.id);
     const start = new Date(Date.UTC(src.startY, src.startM - 1, 1));
-    const est = addDays(start, TYPE_DAYS[src.realScope] ?? 90);
-    const min = addDays(now, 30);
     engagements.push(mkEngagement({
       id: 'e' + i, name: src.name, client: src.client, sector: src.sector, scope,
       stage: stages.length > 2 ? stages[Math.floor((stages.length - 1) / 2)] : stages[0],
-      start: toDay(start), end: toDay(est > min ? est : min),
+      // The prototype has no real end dates for open engagements; leave them unset rather than estimate.
+      start: toDay(start), end: null,
     }, src.lead, src.team));
   });
+  /** The prototype's form silently filled a blank end date with "today + 90/75/120 days" (by scope).
+      Such dates are estimates, not decisions — drop them, along with impossible ones (end before start). */
+  const ARTIFACT_DEFAULT_DAYS: Record<string, number> = { Research: 90, Strategy: 75, Execution: 120 };
+  const DAY_MS = 86_400_000;
+  const realEnd = (ue: Literal): string | null => {
+    if (!ue.end) return null;
+    const end = Date.parse(ue.end + 'T00:00:00Z');
+    const start = Date.parse(ue.start + 'T00:00:00Z');
+    if (end <= start) return null;
+    const def = ARTIFACT_DEFAULT_DAYS[ue.scope] ?? 90;
+    const created = Number(String(ue.id).replace(/^ue/, ''));
+    const createdDay = Number.isFinite(created) ? Date.parse(new Date(created).toISOString().slice(0, 10) + 'T00:00:00Z') : NaN;
+    const days = (from: number) => Math.round((end - from) / DAY_MS);
+    if (days(start) === def || days(createdDay) === def) return null;
+    return ue.end;
+  };
   for (const ue of store.newEngagements ?? []) {
     engagements.push(mkEngagement({
       id: ue.id, name: ue.name, client: ue.client || 'Unassigned', country: ue.country && ue.country !== '—' ? ue.country : 'Egypt',
       sector: ue.sector || 'Unspecified', scope: ue.scope in SCOPE_STAGES ? ue.scope : 'Research', subScope: ue.subScope ?? null,
-      stage: ue.stage, start: ue.start, end: ue.end, notes: ue.notes ?? '', customCps: ue.customCPS ?? null,
+      stage: ue.stage, start: ue.start, end: realEnd(ue), notes: ue.notes ?? '', customCps: ue.customCPS ?? null,
     }, ue.lead, ue.team ?? [], ue.supervisor));
   }
 

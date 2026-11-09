@@ -74,12 +74,15 @@ export function progressFor(scope: string, stage: string): number {
 }
 
 export interface ScheduleInfo {
+  /** Stage dates — only from an uploaded CPS. Empty when no CPS has been uploaded (never estimated). */
   cps: ScheduledStage[];
   stages: StageDef[];
   start: Date;
-  end: Date;
-  pctElapsed: number;
-  daysLeft: number;
+  /** The CPS end, else the planned end date someone entered; null when neither is known. */
+  end: Date | null;
+  /** % of the time frame elapsed; null without a known end. */
+  pctElapsed: number | null;
+  daysLeft: number | null;
   closingSoon: boolean;
   isComplete: boolean;
   isCustomSchedule: boolean;
@@ -87,37 +90,45 @@ export interface ScheduleInfo {
 
 type ScheduleInput = Pick<Engagement, 'start' | 'end' | 'scope' | 'stage' | 'customCps'>;
 
+/** The known time frame of an engagement. Nothing is projected: stage dates come only from an
+    uploaded CPS, and the end only from the CPS or a planned end date someone actually entered. */
 export function scheduleInfo(e: ScheduleInput, now: Date): ScheduleInfo | null {
-  if (!e.start || !e.end) return null;
+  if (!e.start) return null;
   const stages = scopeStages(e.scope);
-  const custom = e.customCps && e.customCps.length > 0;
+  const custom = !!e.customCps && e.customCps.length > 0;
   const cps: ScheduledStage[] = custom
     ? e.customCps!.map((c) => ({ id: c.id, label: c.label, start: parseDay(c.start), end: parseDay(c.end), owner: c.owner ?? null }))
-    : computeCps(e.start, e.end, e.scope);
-  const start = parseDay(e.start);
-  const end = parseDay(e.end);
-  const total = Math.max(1, end.getTime() - start.getTime());
-  const pctElapsed = Math.min(100, Math.max(0, ((now.getTime() - start.getTime()) / total) * 100));
-  const daysLeft = Math.round((end.getTime() - now.getTime()) / DAY);
+    : [];
+  const start = custom ? new Date(Math.min(parseDay(e.start).getTime(), ...cps.map((c) => c.start.getTime()))) : parseDay(e.start);
+  const end = custom ? new Date(Math.max(...cps.map((c) => c.end.getTime()))) : e.end ? parseDay(e.end) : null;
+  const pctElapsed = end ? Math.min(100, Math.max(0, ((now.getTime() - start.getTime()) / Math.max(1, end.getTime() - start.getTime())) * 100)) : null;
+  const daysLeft = end ? Math.round((end.getTime() - now.getTime()) / DAY) : null;
   const last = stages[stages.length - 1];
   const isFinalStage = !!last && last.id === e.stage;
   const isComplete = isKnownScope(e.scope) && isFinalStage;
-  const closingSoon = !isComplete && (e.stage === 'execution' || isFinalStage || daysLeft <= 14 || pctElapsed >= 85);
-  return { cps, stages, start, end, pctElapsed, daysLeft, closingSoon, isComplete, isCustomSchedule: !!custom };
+  const closingSoon = !isComplete && (e.stage === 'execution' || isFinalStage || (daysLeft !== null && daysLeft <= 14) || (pctElapsed !== null && pctElapsed >= 85));
+  return { cps, stages, start, end, pctElapsed, daysLeft, closingSoon, isComplete, isCustomSchedule: custom };
+}
+
+/** The engagement's end as far as it is known (CPS end, else the entered end date). */
+export function knownEnd(e: ScheduleInput): string | null {
+  if (e.customCps && e.customCps.length) return e.customCps.map((c) => c.end).sort().pop()!;
+  return e.end;
 }
 
 export type Health = 'Unscheduled' | 'Complete' | 'Delayed' | 'About to Close' | 'Just Opened' | 'Midway';
 export const HEALTH_VALUES: Health[] = ['Just Opened', 'Midway', 'About to Close', 'Delayed', 'Complete'];
 
-/** Health is computed from dates and stage — never stored. */
+/** Health is computed from the stage and, when known, the time frame — never stored. */
 export function health(e: ScheduleInput, now: Date): Health {
   const info = scheduleInfo(e, now);
   if (!info) return 'Unscheduled';
   if (info.isComplete) return 'Complete';
-  if (info.daysLeft < 0) return 'Delayed';
+  if (info.daysLeft !== null && info.daysLeft < 0) return 'Delayed';
   if (info.closingSoon) return 'About to Close';
-  if (info.pctElapsed < 20) return 'Just Opened';
-  return 'Midway';
+  if (info.pctElapsed !== null) return info.pctElapsed < 20 ? 'Just Opened' : 'Midway';
+  // No time frame: judge by stage alone.
+  return info.stages.findIndex((s) => s.id === e.stage) <= 0 ? 'Just Opened' : 'Midway';
 }
 
 export type Priority = 'High' | 'Medium' | 'Low';

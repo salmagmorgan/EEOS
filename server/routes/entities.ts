@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { DEPARTMENTS, SCOPES, SCOPE_STAGES, STAGE_IDS, TITLES, WORKLOAD_TIER_NAMES, type StageId } from '../../shared/constants.js';
+import { DEPARTMENTS, SCOPES, STAGE_IDS, TITLES, WORKLOAD_TIER_NAMES, type StageId } from '../../shared/constants.js';
 import { initialsOf } from '../../shared/engine.js';
-import { addDays, parseDay, scopeStages, stageLabel, toDay } from '../../shared/schedule.js';
+import { parseDay, scopeStages, stageLabel, toDay } from '../../shared/schedule.js';
 import type { CapacityRule, Client, Engagement, Talent, User } from '../../shared/types.js';
 import { requireRole } from '../auth.js';
 import { type DB, all, getEntity, one } from '../db.js';
@@ -84,7 +84,8 @@ export function entityRoutes(db: DB): Router {
     teamIds: z.array(z.string()).default([]),
     supervisorId: z.string().nullable().default(null),
     start: day.optional(),
-    end: day.optional(),
+    /** Planned end — optional; never filled in automatically. */
+    end: day.nullable().optional(),
     notes: z.string().max(5000).default(''),
     workloadTier: z.enum(WORKLOAD_TIER_NAMES as [string, ...string[]]).default('Quick Work'),
     price: money.default(null),
@@ -97,8 +98,8 @@ export function entityRoutes(db: DB): Router {
     const body = parse(engagementInput, req.body);
     const team = await normaliseTeam(body.leadId, body.teamIds, body.supervisorId);
     const start = body.start ?? toDay(new Date());
-    const end = body.end ?? toDay(addDays(parseDay(start), SCOPE_STAGES[body.scope].typicalDays));
-    if (parseDay(end) <= parseDay(start)) throw new HttpError(400, 'The end date must be after the start date.');
+    const end = body.end ?? null;
+    if (end && parseDay(end) <= parseDay(start)) throw new HttpError(400, 'The end date must be after the start date.');
     const stages = scopeStages(body.scope);
     const stage = body.stage && stages.some((s) => s.id === body.stage) ? body.stage : stages[0].id;
     const hasSub = body.scope === 'Strategy' || body.scope === 'Research and Strategy';
@@ -124,8 +125,8 @@ export function entityRoutes(db: DB): Router {
     const user = me(req);
     const current = await loadEngagement(req.params.id);
     const start = body.start ?? current.start;
-    const end = body.end ?? current.end;
-    if (parseDay(end) <= parseDay(start)) throw new HttpError(400, 'The end date must be after the start date.');
+    const end = body.end === undefined ? current.end : body.end;
+    if (end && parseDay(end) <= parseDay(start)) throw new HttpError(400, 'The end date must be after the start date.');
     if (body.client && body.client !== current.client) {
       const names = await nameLookup();
       await ensureClient(user, body.client, body.sector ?? current.sector, body.country ?? current.country, names([current.leadId]) || 'Unassigned');
