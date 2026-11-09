@@ -276,7 +276,7 @@ export function EmailTeamModal({ id }: { id: string }) {
     </>}>
       {!p ? <div className="muted small">Loading preview…</div> : (
         <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
-          {!q.data?.sender && <div className="viewer-banner">The sending account isn't set up yet — an admin needs to add the SMTP settings in Vercel.</div>}
+          {!q.data?.sender && <div className="viewer-banner">The sending account isn't set up yet — an admin needs to add the Microsoft 365 (MS_…) settings in Vercel.</div>}
           <div><b>To:</b> {p.to.join(', ') || <span className="muted">nobody (no emails on file)</span>}</div>
           <div><b>Cc:</b> {p.cc.join(', ') || <span className="muted">—</span>}</div>
           {p.missing.length > 0 && <div style={{ color: 'var(--warn)' }}>No email on file for {p.missing.join(', ')} — add it under Data Management → Roster.</div>}

@@ -57,7 +57,8 @@ The committed demo seed has every person, client and engagement name replaced, b
 | `SEED_PATH` | demo seed | Loaded into an empty database on first start |
 | `ANTHROPIC_API_KEY` | — | Enables the AI Copilot |
 | `COPILOT_MODEL` | `claude-opus-5-5` | Model used by the Copilot |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM` | — | Account that sends new-project emails (see below) |
+| `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_SENDER` | — | Microsoft 365 account that sends new-project emails (see below) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM` | — | Or: any SMTP account |
 | `COOKIE_SECURE` | `true` on Vercel | Mark session cookies Secure (set `true` behind any other HTTPS host) |
 | `PORT` | `8787` | HTTP port (not used on Vercel) |
 
@@ -90,15 +91,27 @@ Setup, once:
 
 1. **Add each person's work email** under **Data Management → Roster** (or when adding a talent).
 2. **Set the planning committee** addresses in **Settings → New-project emails** (admins).
-3. **Connect a sending account** — add these environment variables in Vercel (Settings → Environment Variables), then redeploy:
+3. **Connect a sending account** — add environment variables in Vercel (Settings → Environment Variables), then redeploy.
+
+**Microsoft 365 (recommended for Microsoft tenants).** Microsoft is retiring password-based SMTP for Microsoft 365 (off by default from the end of December 2026), so EEOS sends through Microsoft Graph instead, with no password stored. A Microsoft 365 / Entra admin does this once:
+
+   1. **entra.microsoft.com → Applications → App registrations → New registration.** Name: `EEOS`; supported account types: *this organizational directory only*; no redirect URI. Register.
+   2. On the app's **Overview**, copy the **Application (client) ID** and the **Directory (tenant) ID**.
+   3. **API permissions → Add a permission → Microsoft Graph → Application permissions → `Mail.Send` → Add**, then **Grant admin consent**.
+   4. **Certificates & secrets → New client secret** (24 months). Copy the secret **Value** straight away — it's shown once. Note the expiry date: make a new secret before it runs out.
+   5. Choose the mailbox the emails come from, e.g. a shared mailbox `eeos@theboardconsulting.com`.
+   6. Recommended: restrict the app to that one mailbox (Exchange Online *RBAC for Applications*, or an application access policy) — `Mail.Send` otherwise allows sending as any mailbox in the organization.
+
+   Then set `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` and `MS_SENDER` (the mailbox address) in Vercel.
+
+**Any SMTP account** (Gmail / Google Workspace, Resend, a mail server):
 
 | Account | `SMTP_HOST` | `SMTP_PORT` | `SMTP_USER` | `SMTP_PASS` |
 |---|---|---|---|---|
 | Gmail / Google Workspace | `smtp.gmail.com` | `465` | the full email address | an **app password** (Google Account → Security → 2-Step Verification → App passwords) |
-| Microsoft 365 / Outlook | `smtp.office365.com` | `587` | the full email address | the mailbox password (IT must allow "Authenticated SMTP" for it) |
 | Resend | `smtp.resend.com` | `465` | `resend` | a Resend API key (the sending domain must be verified in Resend) |
 
-Optionally set `EMAIL_FROM` to the name and address people see, e.g. `TBC EEOS <eeos@theboardconsulting.com>`. Use **Send a test to me** in Settings to check it.
+For SMTP, optionally set `EMAIL_FROM` to the name and address people see, e.g. `TBC EEOS <eeos@theboardconsulting.com>`. Use **Send a test to me** in Settings to check it.
 
 ## Other hosts
 

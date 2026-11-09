@@ -105,7 +105,7 @@ function ProjectEmails() {
         When an engagement is created, this email goes to its leader, members, Operations members and supervisor, with the planning committee in copy.
       </div>
       <div className="box small" style={{ lineHeight: 1.6 }}>
-        <b>Sending account:</b> {q.data.sender ? <span style={{ color: 'var(--ok)' }}>✅ {q.data.sender}</span> : <span style={{ color: 'var(--warn)' }}>⚠ Not set up yet — add the SMTP settings in Vercel (see the guide in the README). Engagements are still created; the email just isn't sent.</span>}
+        <b>Sending account:</b> {q.data.sender ? <span style={{ color: 'var(--ok)' }}>✅ {q.data.sender}</span> : <span style={{ color: 'var(--warn)' }}>⚠ Not set up yet — add the Microsoft 365 (MS_…) settings in Vercel — see the README. Engagements are still created; the email just isn't sent.</span>}
         <br /><b>People with an email on file:</b> {model.talents.length - missingEmails} of {model.talents.length}{missingEmails > 0 && <> — add the rest under <b>Data Management → Roster</b>.</>}
       </div>
       <fieldset disabled={!isAdmin} style={{ border: 'none' }}>
