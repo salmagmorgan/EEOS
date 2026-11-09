@@ -306,6 +306,35 @@ export async function getEntity(ex: Exec, type: EntityType, id: string): Promise
 }
 
 /** Statement that inserts-or-replaces one entity, or deletes it when `value` is null. */
+interface EntityRow { table: string; keys: string[]; cols: string[]; args: unknown[] }
+
+/** Table, key columns, columns and values for one entity. */
+function entityRow(type: EntityType, value: Entity): EntityRow {
+  switch (type) {
+
+    case 'talent': {
+      const t = value as Talent;
+      return row('talents', ['id'], ['id', 'name', 'initials', 'title', 'department', 'status', 'util_override', 'flag', 'created_at', 'updated_at'], [t.id, t.name, t.initials, t.title, t.department, t.status, t.utilOverride ? JSON.stringify(t.utilOverride) : null, t.flag ? JSON.stringify(t.flag) : null, t.createdAt, t.updatedAt]);
+    }
+    case 'engagement': {
+      const e = value as Engagement;
+      return row('engagements', ['id'], ['id', 'name', 'client', 'country', 'sector', 'scope', 'sub_scope', 'stage', 'lead_id', 'team_ids', 'supervisor_id',
+        'start_date', 'end_date', 'notes', 'workload_tier', 'custom_cps', 'price', 'cost', 'status', 'historical', 'allocation_overrides', 'created_at', 'updated_at'], [e.id, e.name, e.client, e.country, e.sector, e.scope, e.subScope, e.stage, e.leadId, JSON.stringify(e.teamIds), e.supervisorId,
+          e.start, e.end, e.notes, e.workloadTier, e.customCps ? JSON.stringify(e.customCps) : null, e.price, e.cost, e.status,
+          e.historical ? 1 : 0, JSON.stringify(e.allocationOverrides ?? {}), e.createdAt, e.updatedAt]);
+    }
+    case 'client': {
+      const c = value as Client;
+      return row('clients', ['id'], ['id', 'name', 'industry', 'country', 'owner'], [c.id, c.name, c.industry, c.country, c.owner]);
+    }
+    case 'capacityRule': {
+      const r = value as CapacityRule;
+      return row('capacity_rules', ['title', 'department'], ['title', 'department', 'project', 'leadership', 'placeholder'], [r.title, r.department, r.project, r.leadership, r.placeholder ? 1 : 0]);
+    }
+  }
+}
+
+/** Statement that inserts-or-replaces one entity, or deletes it when `value` is null. */
 export function putStatement(type: EntityType, id: string, value: Entity | null): Stmt {
   if (value === null) {
     if (type === 'capacityRule') {
@@ -315,28 +344,22 @@ export function putStatement(type: EntityType, id: string, value: Entity | null)
     const table = { talent: 'talents', engagement: 'engagements', client: 'clients' }[type];
     return { sql: `DELETE FROM ${table} WHERE id=?`, args: [id] };
   }
-  switch (type) {
-    case 'talent': {
-      const t = value as Talent;
-      return upsert('talents', ['id'], ['id', 'name', 'initials', 'title', 'department', 'status', 'util_override', 'flag', 'created_at', 'updated_at'], [t.id, t.name, t.initials, t.title, t.department, t.status, t.utilOverride ? JSON.stringify(t.utilOverride) : null, t.flag ? JSON.stringify(t.flag) : null, t.createdAt, t.updatedAt]);
-    }
-    case 'engagement': {
-      const e = value as Engagement;
-      return upsert('engagements', ['id'], ['id', 'name', 'client', 'country', 'sector', 'scope', 'sub_scope', 'stage', 'lead_id', 'team_ids', 'supervisor_id',
-        'start_date', 'end_date', 'notes', 'workload_tier', 'custom_cps', 'price', 'cost', 'status', 'historical', 'allocation_overrides', 'created_at', 'updated_at'], [e.id, e.name, e.client, e.country, e.sector, e.scope, e.subScope, e.stage, e.leadId, JSON.stringify(e.teamIds), e.supervisorId,
-          e.start, e.end, e.notes, e.workloadTier, e.customCps ? JSON.stringify(e.customCps) : null, e.price, e.cost, e.status,
-          e.historical ? 1 : 0, JSON.stringify(e.allocationOverrides ?? {}), e.createdAt, e.updatedAt]);
-    }
-    case 'client': {
-      const c = value as Client;
-      return upsert('clients', ['id'], ['id', 'name', 'industry', 'country', 'owner'], [c.id, c.name, c.industry, c.country, c.owner]);
-    }
-    case 'capacityRule': {
-      const r = value as CapacityRule;
-      return upsert('capacity_rules', ['title', 'department'], ['title', 'department', 'project', 'leadership', 'placeholder'], [r.title, r.department, r.project, r.leadership, r.placeholder ? 1 : 0]);
-    }
-  }
+  const r = entityRow(type, value);
+  return upsert(r.table, r.keys, r.cols, r.args);
 }
+const row = (table: string, keys: string[], cols: string[], args: unknown[]): EntityRow => ({ table, keys, cols, args });
+
+/** Plain multi-row INSERTs, chunked — one round trip per chunk instead of per row. */
+function bulkInsert(table: string, cols: string[], rows: unknown[][], chunk = 100): Stmt[] {
+  const out: Stmt[] = [];
+  for (let i = 0; i < rows.length; i += chunk) {
+    const part = rows.slice(i, i + chunk);
+    const one = '(' + cols.map(() => '?').join(',') + ')';
+    out.push({ sql: `INSERT INTO ${table} (${cols.join(',')}) VALUES ${part.map(() => one).join(',')}`, args: part.flat() });
+  }
+  return out;
+}
+
 export async function putEntity(ex: Exec, type: EntityType, id: string, value: Entity | null): Promise<void> {
   await ex.execute(putStatement(type, id, value));
 }
@@ -359,18 +382,19 @@ export async function isEmpty(db: DB): Promise<boolean> {
 export async function loadSeed(db: DB, seed: SeedFile): Promise<void> {
   const version = Number((await getMeta(db, 'version')) ?? 0) + 1;
   const stmts: StmtLike[] = ['talents', 'engagements', 'clients', 'capacity_rules', 'trajectory', 'audit_log'].map((t) => `DELETE FROM ${t}`);
-  seed.talents.forEach((t) => stmts.push(putStatement('talent', t.id, t)));
-  seed.engagements.forEach((e) => stmts.push(putStatement('engagement', e.id, e)));
-  seed.clients.forEach((c) => stmts.push(putStatement('client', c.id, c)));
-  seed.capacityRules.forEach((r) => stmts.push(putStatement('capacityRule', r.title + '__' + r.department, r)));
-  seed.trajectory.forEach((r) => stmts.push({
-    sql: 'INSERT INTO trajectory (year,month,engagement,sector,scope,status,talent,talent_id,title,role,client) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-    args: [r.year, r.month, r.engagement, r.sector, r.scope, r.status, r.talent, r.talentId, r.title, r.role, r.client],
-  }));
-  (seed.audit ?? []).forEach((a) => stmts.push({
-    sql: 'INSERT INTO audit_log (at,user_id,user_name,action,entity_type,entity_id,entity_name,details) VALUES (?,?,?,?,?,?,?,?)',
-    args: [a.at, null, a.userName, a.action, 'imported', '', a.entityName, a.details],
-  }));
+  const bulk = (type: EntityType, items: Entity[]) => {
+    if (!items.length) return;
+    const first = entityRow(type, items[0]);
+    stmts.push(...bulkInsert(first.table, first.cols, items.map((x) => entityRow(type, x).args)));
+  };
+  bulk('talent', seed.talents);
+  bulk('engagement', seed.engagements);
+  bulk('client', seed.clients);
+  bulk('capacityRule', seed.capacityRules);
+  stmts.push(...bulkInsert('trajectory', ['year', 'month', 'engagement', 'sector', 'scope', 'status', 'talent', 'talent_id', 'title', 'role', 'client'],
+    seed.trajectory.map((r) => [r.year, r.month, r.engagement, r.sector, r.scope, r.status, r.talent, r.talentId, r.title, r.role, r.client])));
+  stmts.push(...bulkInsert('audit_log', ['at', 'user_id', 'user_name', 'action', 'entity_type', 'entity_id', 'entity_name', 'details'],
+    (seed.audit ?? []).map((a) => [a.at, null, a.userName, a.action, 'imported', '', a.entityName, a.details])));
   stmts.push(setMetaStatement('version', String(version)), setMetaStatement('updatedAt', new Date().toISOString()), setMetaStatement('updatedBy', 'Seed: ' + seed.description));
   await db.batch(stmts, 'write');
 }
