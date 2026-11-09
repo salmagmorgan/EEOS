@@ -1,16 +1,21 @@
+import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SCOPES, SCOPE_STAGES, SECTORS, SUB_SCOPES_STRATEGY, WORKLOAD_TIERS, WORKLOAD_TIER_NAMES, type Scope } from '../../../shared/constants';
 import { parseCpsCsv, parseDay, scopeStages, toDay } from '../../../shared/schedule';
-import type { CpsStage } from '../../../shared/types';
+import { buildProjectEmail } from '../../../shared/notify';
+import type { CpsStage, NotificationSettings } from '../../../shared/types';
 import { CpsBar } from '../components/charts';
 import { TeamPicker } from '../components/modals';
-import { Card, PageHead } from '../components/ui';
+import { Card, PageHead, useToast } from '../components/ui';
 import { api } from '../lib/api';
 import { useWorkspace } from '../lib/workspace';
 
 export default function NewEngagement() {
   const { model, canEdit, act } = useWorkspace();
+  const toast = useToast();
+  const notifyQ = useQuery({ queryKey: ['notify-settings'], queryFn: () => api.get<{ settings: NotificationSettings; sender: string | null }>('/settings/notifications'), enabled: canEdit });
+  const [notify, setNotify] = useState(true);
   const nav = useNavigate();
   const staffable = model.talents.filter((t) => t.department !== 'Operations');
   const today = toDay(model.now);
@@ -38,12 +43,26 @@ export default function NewEngagement() {
     setCps(parsed.length ? parsed : null);
     setCpsMsg(parsed.length ? `✅ Loaded ${parsed.length} stages${unmatched.length ? ` — skipped ${unmatched.join(', ')}` : ''}.` : '⚠ No rows matched this scope’s stage names.');
   };
+  type EmailResult = { sent: boolean; skipped?: string; error?: string; to: string[]; cc: string[]; missing: string[] } | null;
   const submit = async () => {
-    const ok = await act(() => api.post('/engagements', {
-      ...f, ...team, end: f.end || null, subScope: strat ? f.subScope || null : null, price: f.price === '' ? null : Number(f.price), cost: f.cost === '' ? null : Number(f.cost), customCps: cps,
-    }), `Engagement “${f.name}” created`);
-    if (ok) nav('/engagements/status');
+    const box: { email: EmailResult } = { email: null };
+    const ok = await act(async () => {
+      const r = await api.post<{ email: EmailResult }>('/engagements', {
+        ...f, ...team, end: f.end || null, subScope: strat ? f.subScope || null : null, price: f.price === '' ? null : Number(f.price), cost: f.cost === '' ? null : Number(f.cost), customCps: cps, notify,
+      });
+      box.email = r.email;
+    });
+    if (!ok) return;
+    const e = box.email;
+    if (!e) toast(`Engagement “${f.name}” created`);
+    else if (e.sent) toast(`Engagement “${f.name}” created · email sent to ${e.to.length + e.cc.length} people${e.missing.length ? ` (no email on file for ${e.missing.join(', ')})` : ''}`);
+    else toast(`Engagement “${f.name}” created, but the email was not sent: ${e.error ?? e.skipped}`, 'error');
+    nav('/engagements/status');
   };
+  const settings = notifyQ.data?.settings;
+  const emailPreview = settings && team.leadId ? buildProjectEmail(
+    { name: f.name || '(project name)', client: f.client || '(client)', sector: f.sector, scope: f.scope, start: f.start, end: f.end || null, ...team },
+    (id) => model.talentById.get(id), settings) : null;
 
   if (!canEdit) return <PageHead title="New Engagement" desc="You have view-only access, so you can't create engagements." />;
   return (
@@ -101,6 +120,22 @@ export default function NewEngagement() {
           <div className="form-field full"><TeamPicker model={model} {...team} onChange={setTeam} /></div>
           <div className="form-field full"><label>Notes</label><textarea value={f.notes} onChange={set('notes')} placeholder="Context, objectives, background…" /></div>
         </div>
+        {emailPreview && (
+          <div className="box" style={{ marginTop: 16, fontSize: 12, lineHeight: 1.6 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', fontWeight: 600, color: 'var(--text)' }}>
+              <input type="checkbox" checked={notify && settings!.enabled} disabled={!settings!.enabled} onChange={(e) => setNotify(e.target.checked)} />
+              📧 Email the team and planning committee when I create this
+            </label>
+            {!settings!.enabled ? <div className="muted">New-project emails are turned off in Settings.</div> : notify && (
+              <>
+                <div><b>To:</b> {emailPreview.to.join(', ') || <span className="muted">nobody on this team has an email on file</span>}</div>
+                <div><b>Cc (planning committee):</b> {emailPreview.cc.join(', ') || <span className="muted">none set — add it in Settings</span>}</div>
+                {emailPreview.missing.length > 0 && <div style={{ color: 'var(--warn)' }}>No email on file for {emailPreview.missing.join(', ')} — add it under Data Management → Roster.</div>}
+                {!notifyQ.data?.sender && <div style={{ color: 'var(--warn)' }}>The sending account isn't set up yet, so the email won't go out until it is.</div>}
+              </>
+            )}
+          </div>
+        )}
         <div className="row" style={{ marginTop: 18 }}>
           <button className="btn btn-primary" disabled={!f.name.trim() || !f.client.trim() || !f.sector.trim() || !datesOk || !team.leadId} onClick={submit}>＋ Create engagement</button>
           <button className="btn btn-ghost" onClick={() => { setF(blank()); setCps(null); setCpsMsg(''); }}>Clear form</button>

@@ -66,10 +66,10 @@ export function seedFromArtifact(html: string, opts: { store?: Literal; now?: Da
   // ---- talents (ids t0..tN kept so the store's overrides still line up) ----
   const talents: Talent[] = roster.map((r, i) => ({
     id: 't' + i, name: r.name, initials: initialsOf(r.name), title: r.title, department: r.department,
-    status: 'active', utilOverride: null, flag: null, createdAt: nowIso, updatedAt: nowIso,
+    status: 'active', utilOverride: null, flag: null, createdAt: nowIso, updatedAt: nowIso, email: null,
   }));
   for (const t of store.newTalents ?? []) {
-    talents.push({ id: t.id, name: t.name, initials: initialsOf(t.name), title: t.title, department: t.department, status: 'active', utilOverride: null, flag: null, createdAt: nowIso, updatedAt: nowIso });
+    talents.push({ id: t.id, name: t.name, initials: initialsOf(t.name), title: t.title, department: t.department, status: 'active', utilOverride: null, flag: null, createdAt: nowIso, updatedAt: nowIso, email: null });
   }
   for (const [id, edit] of Object.entries<Literal>(store.talentEdits ?? {})) {
     const t = talents.find((x) => x.id === id);
@@ -94,7 +94,7 @@ export function seedFromArtifact(html: string, opts: { store?: Literal; now?: Da
     if (!name) return null;
     const hit = byName.get(name);
     if (hit) return hit.id;
-    const t: Talent = { id: 'ta-' + slug(name), name, initials: initialsOf(name), title: 'Former team member', department: 'Consulting', status: 'alumni', utilOverride: null, flag: null, createdAt: nowIso, updatedAt: nowIso };
+    const t: Talent = { id: 'ta-' + slug(name), name, initials: initialsOf(name), title: 'Former team member', department: 'Consulting', status: 'alumni', utilOverride: null, flag: null, createdAt: nowIso, updatedAt: nowIso, email: null };
     talents.push(t);
     byName.set(name, t);
     return t.id;

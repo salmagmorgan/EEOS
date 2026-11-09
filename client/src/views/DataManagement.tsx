@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { DEPARTMENTS, TITLES } from '../../../shared/constants';
+import { isEmail } from '../../../shared/notify';
 import { stageLabel } from '../../../shared/schedule';
 import type { CapacityRule, Talent } from '../../../shared/types';
 import { EngagementModal, TalentModal } from '../components/modals';
@@ -104,20 +105,34 @@ function Roster() {
   const rows = m.data.talents.filter((t) => t.status === 'active');
   return (
     <Card>
-      <div className="section-desc" style={{ marginTop: 0 }}>Name, title and department for everyone on the roster. Corrections apply everywhere — engagements reference people by ID, so renames are safe.</div>
+      <div className="section-desc" style={{ marginTop: 0 }}>Name, title, department and work email for everyone on the roster. Emails are used for new-project notifications. Changes save when you leave the box.</div>
       <div className="table-wrap">
         <table className="data">
-          <thead><tr><th>Name</th><th>Title</th><th>Department</th></tr></thead>
+          <thead><tr><th>Name</th><th>Title</th><th>Department</th><th>Work email</th></tr></thead>
           <tbody>{rows.map((t) => (
             <tr key={t.id} style={{ cursor: 'default' }}>
               <td><input className="inline-input" defaultValue={t.name} disabled={!canEdit} style={{ width: 200 }} onBlur={(e) => e.target.value.trim() && e.target.value !== t.name && save(t, { name: e.target.value.trim() })} /></td>
               <td><select className="inline-input" value={t.title} disabled={!canEdit} onChange={(e) => save(t, { title: e.target.value })}>{TITLES.map((x) => <option key={x}>{x}</option>)}</select></td>
               <td><select className="inline-input" value={t.department} disabled={!canEdit} onChange={(e) => save(t, { department: e.target.value })}>{DEPARTMENTS.map((x) => <option key={x}>{x}</option>)}</select></td>
+              <td><EmailCell talent={t} disabled={!canEdit} onSave={(email) => save(t, { email })} /></td>
             </tr>
           ))}</tbody>
         </table>
       </div>
     </Card>
+  );
+}
+
+function EmailCell({ talent, disabled, onSave }: { talent: Talent; disabled: boolean; onSave: (email: string | null) => void }) {
+  const [v, setV] = useState(talent.email ?? '');
+  const ok = !v.trim() || isEmail(v);
+  return (
+    <span>
+      <input className="inline-input" type="email" placeholder="name@company.com" value={v} disabled={disabled} style={{ width: 230, borderColor: ok ? undefined : 'var(--danger)' }}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={() => { const next = v.trim() ? v.trim().toLowerCase() : null; if (ok && next !== talent.email) onSave(next); }} />
+      {!ok && <div className="error-text" style={{ marginTop: 2 }}>Not a valid email</div>}
+    </span>
   );
 }
 

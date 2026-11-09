@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../server/app';
 import { createUser } from '../server/auth';
 import { type DB, type PgLike, loadSeed, migrate, openDb, postgresDb } from '../server/db';
+import type { MailMessage } from '../server/mailer';
 
 /** In-process Postgres, so the Postgres code path is tested without a server. */
 function pglite(): DB {
@@ -24,6 +25,9 @@ describe.each([
   let app: ReturnType<typeof createApp>;
   let admin: request.Agent;
   let viewer: request.Agent;
+  const outbox: MailMessage[] = [];
+  let mailFails = false;
+  const mailer = { from: 'eeos@test.dev', send: async (m: MailMessage) => { if (mailFails) throw new Error('SMTP down'); outbox.push(m); } };
   const login = async (email: string, password: string) => {
     const agent = request.agent(app);
     await agent.post('/api/auth/login').set('X-EEOS', '1').send({ email, password }).expect(200);
@@ -36,7 +40,7 @@ describe.each([
     await loadSeed(db, JSON.parse(fs.readFileSync('server/seed/demo-seed.json', 'utf8')));
     await createUser(db, { name: 'Ada Admin', email: 'admin@test.dev', role: 'admin', password: 'correct-horse-1' });
     await createUser(db, { name: 'Vic Viewer', email: 'viewer@test.dev', role: 'viewer', password: 'correct-horse-2' });
-    app = createApp(db, { cookieSecure: false, demoSeedPath: 'server/seed/demo-seed.json', copilotModel: 'claude-opus-5-5' });
+    app = createApp(db, { cookieSecure: false, demoSeedPath: 'server/seed/demo-seed.json', copilotModel: 'claude-opus-5-5', mailer });
     admin = await login('admin@test.dev', 'correct-horse-1');
     viewer = await login('viewer@test.dev', 'correct-horse-2');
   }, 60_000);
@@ -114,6 +118,58 @@ describe.each([
     const cleared = await admin.patch(`/api/engagements/${id}`).set('X-EEOS', '1').send({ end: null }).expect(200);
     expect(cleared.body.engagement.end).toBeNull();
     await admin.patch(`/api/engagements/${id}`).set('X-EEOS', '1').send({ end: '2026-10-01' }).expect(400);
+  });
+
+  it('emails the new-project template to the team and planning committee', async () => {
+    const w = (await admin.get('/api/workspace')).body;
+    const act = w.talents.filter((t: { status: string }) => t.status === 'active');
+    const lead = act.find((t: { department: string }) => t.department === 'Consulting');
+    const member = act.find((t: { department: string; id: string }) => t.department === 'Consulting' && t.id !== lead.id);
+    const ops = act.find((t: { department: string }) => t.department === 'Operations');
+    const sup = act.find((t: { department: string; id: string }) => t.department !== 'Operations' && t.id !== lead.id && t.id !== member.id);
+    const noEmail = act.find((t: { department: string; id: string }) => t.department === 'Pulse' && ![lead.id, member.id, sup.id].includes(t.id));
+    for (const [t, email] of [[lead, 'Lead@TBC.test'], [member, 'member@tbc.test'], [ops, 'ops@tbc.test'], [sup, 'sup@tbc.test']])
+      await admin.patch(`/api/talents/${t.id}`).set('X-EEOS', '1').send({ email }).expect(200);
+    await admin.patch(`/api/talents/${lead.id}`).set('X-EEOS', '1').send({ email: 'not-an-email' }).expect(400);
+    await viewer.put('/api/settings/notifications').set('X-EEOS', '1').send({}).expect(403);
+    const defaults = (await admin.get('/api/settings/notifications').expect(200)).body.defaults;
+    await admin.put('/api/settings/notifications').set('X-EEOS', '1').send({ ...defaults, committee: ['Committee@TBC.test', 'pmo@tbc.test'] }).expect(200);
+
+    outbox.length = 0;
+    const res = await admin.post('/api/engagements').set('X-EEOS', '1').send({
+      name: 'Email Test Project', client: 'Mail Client', sector: 'Retail', scope: 'Research', leadId: lead.id,
+      teamIds: [lead.id, member.id, ops.id, noEmail.id], supervisorId: sup.id, start: '2026-11-10',
+    }).expect(200);
+    expect(res.body.email.sent).toBe(true);
+    expect(res.body.email.missing).toEqual([noEmail.name]);
+    expect(outbox).toHaveLength(1);
+    const m = outbox[0];
+    expect(m.to.sort()).toEqual(['lead@tbc.test', 'member@tbc.test', 'ops@tbc.test', 'sup@tbc.test']);
+    expect(m.cc).toEqual(['committee@tbc.test', 'pmo@tbc.test']);
+    expect(m.subject).toBe('New project commissioned: Email Test Project');
+    expect(m.text).toContain('Hello team,');
+    expect(m.text).toContain('Project name: Email Test Project');
+    expect(m.text).toContain('Client name: Mail Client');
+    expect(m.text).toContain(`Engagement Leader: ${lead.name}`);
+    expect(m.text).toContain(`Engagement members: ${member.name}, ${noEmail.name}`);
+    expect(m.text).toContain(`Operations member: ${ops.name}`);
+    expect(m.text).toContain(`Supervisor: ${sup.name}`);
+    const audit = (await admin.get('/api/audit')).body.entries;
+    expect(audit[0].action).toBe('Sent new-project email');
+
+    // Opt-out, failures and resending
+    outbox.length = 0;
+    const quiet = await admin.post('/api/engagements').set('X-EEOS', '1').send({ name: 'Quiet', client: 'Mail Client', sector: 'Retail', scope: 'Research', leadId: lead.id, notify: false }).expect(200);
+    expect(quiet.body.email).toBeNull();
+    expect(outbox).toHaveLength(0);
+    mailFails = true;
+    const failed = await admin.post('/api/engagements').set('X-EEOS', '1').send({ name: 'Fails', client: 'Mail Client', sector: 'Retail', scope: 'Research', leadId: lead.id }).expect(200);
+    expect(failed.body.engagement.id).toBeTruthy();
+    expect(failed.body.email).toMatchObject({ sent: false, error: 'SMTP down' });
+    mailFails = false;
+    const resent = await admin.post(`/api/engagements/${failed.body.engagement.id}/notify`).set('X-EEOS', '1').expect(200);
+    expect(resent.body.result.sent).toBe(true);
+    await viewer.post(`/api/engagements/${failed.body.engagement.id}/notify`).set('X-EEOS', '1').expect(403);
   });
 
   it('validates input', async () => {

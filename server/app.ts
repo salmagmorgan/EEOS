@@ -5,7 +5,9 @@ import path from 'node:path';
 import { authenticate, csrfGuard } from './auth.js';
 import { SetupError } from './bootstrap.js';
 import type { DB } from './db.js';
+import { type Mailer, smtpMailer } from './mailer.js';
 import { authRoutes } from './routes/auth.js';
+import { notificationRoutes } from './routes/notifications.js';
 import { copilotRoutes } from './routes/copilot.js';
 import { entityRoutes } from './routes/entities.js';
 import { workspaceRoutes } from './routes/workspace.js';
@@ -18,6 +20,8 @@ export interface AppConfig {
   /** Directory with the built web app; served when present. */
   staticDir?: string;
   onVercel?: boolean;
+  /** Outgoing email; defaults to SMTP from environment variables. */
+  mailer?: Mailer;
 }
 
 export function createApp(db: DB, config: AppConfig, ready: Promise<void> = Promise.resolve()) {
@@ -47,7 +51,9 @@ export function createApp(db: DB, config: AppConfig, ready: Promise<void> = Prom
   app.use('/api', authenticate(db), csrfGuard);
   app.use('/api', authRoutes(db, { cookieSecure: config.cookieSecure }));
   app.use('/api', workspaceRoutes(db, { demoSeedPath: config.demoSeedPath }));
-  app.use('/api', entityRoutes(db));
+  const mailer = config.mailer ?? smtpMailer();
+  app.use('/api', entityRoutes(db, mailer));
+  app.use('/api', notificationRoutes(db, mailer));
   app.use('/api', copilotRoutes(db, { apiKey: config.anthropicApiKey, model: config.copilotModel }));
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
 

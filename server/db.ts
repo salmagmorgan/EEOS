@@ -246,6 +246,8 @@ const MIGRATIONS: (string | { sqlite: string; postgres: string })[] = [
   UPDATE engagements SET end_date = NULL WHERE historical = 0 AND id LIKE 'e%' AND id NOT LIKE 'eng%'
   `,
   },
+  // 3: work email per person, for new-project notifications.
+  `ALTER TABLE talents ADD COLUMN email TEXT`,
 ];
 
 /** Postgres flavour of the schema: same tables and columns, Postgres types. */
@@ -311,7 +313,7 @@ const json = <T>(s: string | null): T | null => (s ? (JSON.parse(s) as T) : null
 
 export const talentFromRow = (r: Row): Talent => ({
   id: r.id, name: r.name, initials: r.initials, title: r.title, department: r.department, status: r.status,
-  utilOverride: json(r.util_override), flag: json(r.flag), createdAt: r.created_at, updatedAt: r.updated_at,
+  utilOverride: json(r.util_override), flag: json(r.flag), createdAt: r.created_at, updatedAt: r.updated_at, email: r.email ?? null,
 });
 export const engagementFromRow = (r: Row): Engagement => ({
   id: r.id, name: r.name, client: r.client, country: r.country, sector: r.sector, scope: r.scope, subScope: r.sub_scope,
@@ -355,7 +357,7 @@ function entityRow(type: EntityType, value: Entity): EntityRow {
 
     case 'talent': {
       const t = value as Talent;
-      return row('talents', ['id'], ['id', 'name', 'initials', 'title', 'department', 'status', 'util_override', 'flag', 'created_at', 'updated_at'], [t.id, t.name, t.initials, t.title, t.department, t.status, t.utilOverride ? JSON.stringify(t.utilOverride) : null, t.flag ? JSON.stringify(t.flag) : null, t.createdAt, t.updatedAt]);
+      return row('talents', ['id'], ['id', 'name', 'initials', 'title', 'department', 'status', 'util_override', 'flag', 'created_at', 'updated_at', 'email'], [t.id, t.name, t.initials, t.title, t.department, t.status, t.utilOverride ? JSON.stringify(t.utilOverride) : null, t.flag ? JSON.stringify(t.flag) : null, t.createdAt, t.updatedAt, t.email ?? null]);
     }
     case 'engagement': {
       const e = value as Engagement;

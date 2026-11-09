@@ -57,6 +57,7 @@ The committed demo seed has every person, client and engagement name replaced, b
 | `SEED_PATH` | demo seed | Loaded into an empty database on first start |
 | `ANTHROPIC_API_KEY` | — | Enables the AI Copilot |
 | `COPILOT_MODEL` | `claude-opus-5-5` | Model used by the Copilot |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM` | — | Account that sends new-project emails (see below) |
 | `COOKIE_SECURE` | `true` on Vercel | Mark session cookies Secure (set `true` behind any other HTTPS host) |
 | `PORT` | `8787` | HTTP port (not used on Vercel) |
 
@@ -80,6 +81,24 @@ DATABASE_URL='postgres://…' npm run seed -- data/real-seed.json
 ```
 
 or upload the seed file under **Data Management → Backup & restore** (Vercel limits uploads to about 4.5 MB, plenty for EEOS data).
+
+## New-project emails
+
+When an engagement is created, EEOS emails its leader, members, Operations members and supervisor, with the planning committee in copy, using the template in **Settings → New-project emails** (editable; every `{{field}}` fills in automatically). The email can be switched off per engagement on the New Engagement form, re-sent from the engagement's **📧 Email team** button, and every send is recorded in the Audit Trail. If sending fails, the engagement is still created and the message says why.
+
+Setup, once:
+
+1. **Add each person's work email** under **Data Management → Roster** (or when adding a talent).
+2. **Set the planning committee** addresses in **Settings → New-project emails** (admins).
+3. **Connect a sending account** — add these environment variables in Vercel (Settings → Environment Variables), then redeploy:
+
+| Account | `SMTP_HOST` | `SMTP_PORT` | `SMTP_USER` | `SMTP_PASS` |
+|---|---|---|---|---|
+| Gmail / Google Workspace | `smtp.gmail.com` | `465` | the full email address | an **app password** (Google Account → Security → 2-Step Verification → App passwords) |
+| Microsoft 365 / Outlook | `smtp.office365.com` | `587` | the full email address | the mailbox password (IT must allow "Authenticated SMTP" for it) |
+| Resend | `smtp.resend.com` | `465` | `resend` | a Resend API key (the sending domain must be verified in Resend) |
+
+Optionally set `EMAIL_FROM` to the name and address people see, e.g. `TBC EEOS <eeos@theboardconsulting.com>`. Use **Send a test to me** in Settings to check it.
 
 ## Other hosts
 

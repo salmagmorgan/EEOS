@@ -1,12 +1,14 @@
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import { DEPARTMENTS, LIFECYCLE, SCOPES, SCOPE_STAGES, TITLES, WORKLOAD_TIERS, WORKLOAD_TIER_NAMES } from '../../../shared/constants';
 import { fmtMoney, type Model } from '../../../shared/engine';
+import { isEmail, type ProjectEmail } from '../../../shared/notify';
 import { parseCpsCsv, scopeStages, stageLabel } from '../../../shared/schedule';
 import type { Engagement } from '../../../shared/types';
 import { api } from '../lib/api';
 import { useWorkspace } from '../lib/workspace';
 import { Bars, CpsBar, LineChart } from './charts';
-import { Avatar, Confirm, Empty, ListRow, ModalFrame, Stat, Tag, fmtDate, healthClass, priorityClass, statusColor, useModal } from './ui';
+import { Avatar, Confirm, Empty, ListRow, ModalFrame, Stat, Tag, fmtDate, healthClass, priorityClass, statusColor, useModal, useToast } from './ui';
 
 // ---------------- reusable team picker ----------------
 export function TeamPicker({ model, leadId, teamIds, supervisorId, onChange }: {
@@ -83,6 +85,7 @@ export function EngagementModal({ id }: { id: string }) {
       {bucket === 'paused' && <button className="btn btn-primary btn-sm" onClick={() => statusAction('resume', 'Engagement resumed')}>▶ Resume</button>}
       {bucket === 'closed' && <button className="btn btn-sm" onClick={() => statusAction('reopen', 'Engagement reopened')}>↺ Reopen</button>}
       {bucket === 'active' && <button className="btn btn-sm" onClick={() => statusAction('pause', 'Engagement paused')}>⏸ Pause</button>}
+      <button className="btn btn-sm" title="Send the new-project email to this team and the planning committee" onClick={() => modal.open(<EmailTeamModal id={id} />)}>📧 Email team</button>
       {(bucket === 'active' || bucket === 'paused') && (
         <button className="btn btn-danger-outline btn-sm" onClick={() => confirm('Close engagement?', <>Close <b>{e.name}</b>? It stops counting toward KPIs and utilization everywhere. You can reopen it later.</>, '🔒 Close it', 'close', 'Engagement closed')}>🔒 Close</button>
       )}
@@ -247,6 +250,44 @@ function DetailsTab({ e, editable }: { e: Engagement; editable: boolean }) {
   );
 }
 
+// ---------------- new-project email ----------------
+export function EmailTeamModal({ id }: { id: string }) {
+  const { act } = useWorkspace();
+  const modal = useModal();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ['notify-preview', id], queryFn: () => api.get<{ email: ProjectEmail; sender: string | null }>(`/engagements/${id}/notify`) });
+  const [busy, setBusy] = useState(false);
+  const p = q.data?.email;
+  const send = async () => {
+    setBusy(true);
+    type SendResult = { sent: boolean; error?: string; skipped?: string; to: string[]; cc: string[] };
+    const box: { r?: SendResult } = {};
+    await act(async () => { box.r = (await api.post<{ result: SendResult }>(`/engagements/${id}/notify`)).result; });
+    setBusy(false);
+    const r = box.r;
+    if (!r) return;
+    if (r.sent) { toast(`Email sent to ${r.to.length + r.cc.length} people`); modal.open(<EngagementModal id={id} />); }
+    else toast('Not sent: ' + (r.error ?? r.skipped), 'error');
+  };
+  return (
+    <ModalFrame title="📧 Email the team" footer={<>
+      <button className="btn btn-ghost btn-sm" onClick={() => modal.open(<EngagementModal id={id} />)}>← Back</button>
+      <button className="btn btn-primary btn-sm" disabled={!p || busy || (!p.to.length && !p.cc.length) || !q.data?.sender} onClick={send}>{busy ? 'Sending…' : 'Send email'}</button>
+    </>}>
+      {!p ? <div className="muted small">Loading preview…</div> : (
+        <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+          {!q.data?.sender && <div className="viewer-banner">The sending account isn't set up yet — an admin needs to add the SMTP settings in Vercel.</div>}
+          <div><b>To:</b> {p.to.join(', ') || <span className="muted">nobody (no emails on file)</span>}</div>
+          <div><b>Cc:</b> {p.cc.join(', ') || <span className="muted">—</span>}</div>
+          {p.missing.length > 0 && <div style={{ color: 'var(--warn)' }}>No email on file for {p.missing.join(', ')} — add it under Data Management → Roster.</div>}
+          <div><b>Subject:</b> {p.subject}</div>
+          <div className="box" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{p.body}</div>
+        </div>
+      )}
+    </ModalFrame>
+  );
+}
+
 // ---------------- project weights ----------------
 const WEIGHT_COLORS = ['#6C68D6', '#4FC98A', '#F47381', '#B1A7DA', '#D48806', '#3BA4D8', '#E26CC5', '#9BD25B'];
 
@@ -348,7 +389,7 @@ export function TalentModal({ id }: { id: string }) {
         <div className="profile-avatar">{t.initials}</div>
         <div>
           <div style={{ fontWeight: 700, fontSize: 15 }}>{t.name}</div>
-          <div className="muted" style={{ fontSize: 12 }}>{t.title} · {t.department}</div>
+          <div className="muted" style={{ fontSize: 12 }}>{t.title} · {t.department} · {t.email ? <a href={`mailto:${t.email}`} style={{ color: 'var(--accent)' }}>{t.email}</a> : <span style={{ color: 'var(--warn)' }}>no email on file</span>}</div>
           <div className="pill-row">{t.sectors.length ? t.sectors.map((s) => <span key={s} className="mini-pill">{s}</span>) : <span className="mini-pill">No engagement history yet</span>}</div>
         </div>
       </div>
@@ -380,12 +421,13 @@ export function TalentModal({ id }: { id: string }) {
 export function AddTalentModal() {
   const { act } = useWorkspace();
   const { close } = useModal();
-  const [f, setF] = useState({ name: '', title: TITLES[4], department: DEPARTMENTS[0] });
+  const [f, setF] = useState({ name: '', email: '', title: TITLES[4], department: DEPARTMENTS[0] });
   return (
-    <ModalFrame title="Add new talent" footer={<button className="btn btn-primary btn-sm" disabled={f.name.trim().length < 2}
+    <ModalFrame title="Add new talent" footer={<button className="btn btn-primary btn-sm" disabled={f.name.trim().length < 2 || (!!f.email.trim() && !isEmail(f.email))}
       onClick={async () => { if (await act(() => api.post('/talents', f), `${f.name} added`)) close(); }}>Add talent</button>}>
       <div className="form-grid">
         <div className="form-field full"><label>Full name</label><input autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></div>
+        <div className="form-field full"><label>Work email (for project notifications)</label><input type="email" placeholder="name@company.com" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></div>
         <div className="form-field"><label>Title</label><select value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })}>{TITLES.map((t) => <option key={t}>{t}</option>)}</select></div>
         <div className="form-field"><label>Department</label><select value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })}>{DEPARTMENTS.map((d) => <option key={d}>{d}</option>)}</select></div>
       </div>

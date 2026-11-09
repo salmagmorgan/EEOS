@@ -7,6 +7,8 @@ import { parseDay, scopeStages, stageLabel, toDay } from '../../shared/schedule.
 import type { CapacityRule, Client, Engagement, Talent, User } from '../../shared/types.js';
 import { requireRole } from '../auth.js';
 import { type DB, all, getEntity, one } from '../db.js';
+import type { Mailer } from '../mailer.js';
+import { sendProjectEmail } from '../notifications.js';
 import { HttpError, mutate } from '../store.js';
 import { me, parse, route } from './util.js';
 
@@ -20,7 +22,7 @@ const cpsSchema = z.array(z.object({
 const newId = (prefix: string) => prefix + crypto.randomBytes(6).toString('hex');
 const fmt = (n: number | null) => (n === null ? '—' : n.toLocaleString('en-US'));
 
-export function entityRoutes(db: DB): Router {
+export function entityRoutes(db: DB, mailer: Mailer): Router {
   const r = Router();
   const editor = requireRole('editor');
 
@@ -91,6 +93,8 @@ export function entityRoutes(db: DB): Router {
     price: money.default(null),
     cost: money.default(null),
     customCps: cpsSchema.default(null),
+    /** Email the team and planning committee (default on). */
+    notify: z.boolean().default(true),
   });
 
   r.post('/engagements', editor, route(async (req) => {
@@ -117,11 +121,13 @@ export function entityRoutes(db: DB): Router {
       }),
       details: (_b, a) => `${a!.client} · ${a!.scope} · Lead: ${names([a!.leadId])}${a!.supervisorId ? ' · Supervisor: ' + names([a!.supervisorId]) : ''}`,
     });
-    return { engagement: created };
+    // The engagement is saved regardless; the email result is reported back separately.
+    const email = body.notify ? await sendProjectEmail(db, mailer, id, user) : null;
+    return { engagement: created, email };
   }));
 
   r.patch('/engagements/:id', editor, route(async (req) => {
-    const body = parse(engagementInput.pick({ name: true, client: true, country: true, sector: true, scope: true, subScope: true, start: true, end: true, notes: true }).partial(), req.body);
+    const body = parse(engagementInput.omit({ notify: true }).pick({ name: true, client: true, country: true, sector: true, scope: true, subScope: true, start: true, end: true, notes: true }).partial(), req.body);
     const user = me(req);
     const current = await loadEngagement(req.params.id);
     const start = body.start ?? current.start;
@@ -230,6 +236,7 @@ export function entityRoutes(db: DB): Router {
   // ---------- talents ----------
   const talentInput = z.object({
     name: z.string().trim().min(2).max(80),
+    email: z.union([z.string().trim().email('must be a valid email address'), z.literal('')]).nullable().optional().transform((v) => (v ? v.toLowerCase() : null)),
     title: z.string().refine((t) => TITLES.includes(t), 'unknown title'),
     department: z.string().refine((d) => DEPARTMENTS.includes(d), 'unknown department'),
   });
@@ -245,7 +252,7 @@ export function entityRoutes(db: DB): Router {
     return {
       talent: await mutate<Talent>(db, me(req), {
         type: 'talent', id, action: 'Added new talent',
-        apply: () => ({ id, ...body, initials: initialsOf(body.name), status: 'active', utilOverride: null, flag: null, createdAt: now, updatedAt: now }),
+        apply: () => ({ id, ...body, email: body.email ?? null, initials: initialsOf(body.name), status: 'active', utilOverride: null, flag: null, createdAt: now, updatedAt: now }),
         details: (_b, a) => `${a!.title} · ${a!.department}`,
       }),
     };
@@ -253,6 +260,7 @@ export function entityRoutes(db: DB): Router {
 
   r.patch('/talents/:id', editor, route(async (req) => {
     const body = parse(talentInput.partial(), req.body);
+    if (!('email' in (req.body ?? {}))) delete (body as { email?: unknown }).email;
     return {
       talent: await talentMutation(me(req), req.params.id, 'Edited talent record', (t) => {
         Object.assign(t, Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)));

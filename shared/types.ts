@@ -37,6 +37,8 @@ export interface Talent {
   flag: Flag | null;
   createdAt: string;
   updatedAt: string;
+  /** Work email, used for project notifications. */
+  email: string | null;
 }
 
 export interface CpsStage {
@@ -149,4 +151,13 @@ export interface SeedFile {
   capacityRules: CapacityRule[];
   trajectory: Omit<TrajectoryRow, 'id'>[];
   audit?: { at: string; userName: string; action: string; entityName: string; details: string }[];
+}
+
+/** Admin settings for the email sent when an engagement is created. */
+export interface NotificationSettings {
+  enabled: boolean;
+  /** Planning committee addresses — copied on every new-project email. */
+  committee: string[];
+  subject: string;
+  body: string;
 }
