@@ -1,9 +1,12 @@
-import Database from 'better-sqlite3';
+import { createClient, type Client as LibsqlClient, type InArgs, type InStatement, type Transaction } from '@libsql/client';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CapacityRule, Client, Engagement, SeedFile, Talent, TrajectoryRow } from '../shared/types';
+import type { CapacityRule, Client, Engagement, SeedFile, Talent, TrajectoryRow } from '../shared/types.js';
 
-export type DB = Database.Database;
+/** The database: a local SQLite file in development, Turso (hosted libSQL) in production. */
+export type DB = LibsqlClient;
+/** Anything that can run a statement — the client itself or an open transaction. */
+export type Exec = Pick<LibsqlClient | Transaction, 'execute'>;
 
 const MIGRATIONS: string[] = [
   `
@@ -66,7 +69,7 @@ const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
-  CREATE INDEX engagements_status ON engagements(status);
+  CREATE INDEX IF NOT EXISTS engagements_status ON engagements(status);
   CREATE TABLE capacity_rules (
     title TEXT NOT NULL,
     department TEXT NOT NULL,
@@ -104,24 +107,54 @@ const MIGRATIONS: string[] = [
     undone_at TEXT,
     undone_by TEXT
   );
-  CREATE INDEX audit_entity ON audit_log(entity_type, entity_id);
+  CREATE INDEX IF NOT EXISTS audit_entity ON audit_log(entity_type, entity_id);
   CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `,
 ];
 
-export function openDb(file: string): DB {
-  if (file !== ':memory:') fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
-  const db = new Database(file);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  const current = db.pragma('user_version', { simple: true }) as number;
-  for (let v = current; v < MIGRATIONS.length; v++) {
-    db.transaction(() => {
-      db.exec(MIGRATIONS[v]);
-      db.pragma(`user_version = ${v + 1}`);
-    })();
+export function openDb(url: string, authToken?: string): DB {
+  if (url !== ':memory:' && !/^[a-z]+:/.test(url)) {
+    // A bare path: make sure its folder exists and turn it into a file: URL.
+    fs.mkdirSync(path.dirname(path.resolve(url)), { recursive: true });
+    url = 'file:' + url;
   }
-  return db;
+  return createClient({ url, authToken: authToken || undefined });
+}
+
+/** Apply any pending schema migrations. Safe to run on every cold start. */
+export async function migrate(db: DB): Promise<void> {
+  await db.execute('CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
+  const done = new Set((await db.execute('SELECT version FROM _migrations')).rows.map((r) => Number(r.version)));
+  for (let v = 0; v < MIGRATIONS.length; v++) {
+    if (done.has(v + 1)) continue;
+    const stmts = MIGRATIONS[v].split(';').map((x) => x.trim()).filter(Boolean);
+    await db.batch([...stmts, { sql: 'INSERT OR IGNORE INTO _migrations (version, applied_at) VALUES (?, ?)', args: [v + 1, new Date().toISOString()] }], 'write');
+  }
+}
+
+/** Run `fn` inside a write transaction. */
+export async function inTransaction<T>(db: DB, fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  const tx = await db.transaction('write');
+  try {
+    const out = await fn(tx);
+    await tx.commit();
+    return out;
+  } catch (e) {
+    await tx.rollback().catch(() => {});
+    throw e;
+  } finally {
+    tx.close();
+  }
+}
+
+export async function one<T = Row>(ex: Exec, sql: string, args: InArgs = []): Promise<T | undefined> {
+  return (await ex.execute({ sql, args })).rows[0] as T | undefined;
+}
+export async function all<T = Row>(ex: Exec, sql: string, args: InArgs = []): Promise<T[]> {
+  return (await ex.execute({ sql, args })).rows as unknown as T[];
+}
+export async function run(ex: Exec, sql: string, args: InArgs = []): Promise<void> {
+  await ex.execute({ sql, args });
 }
 
 // ---------- row mapping ----------
@@ -150,93 +183,91 @@ export const trajectoryFromRow = (r: Row): TrajectoryRow => ({
 export type EntityType = 'talent' | 'engagement' | 'client' | 'capacityRule';
 export type Entity = Talent | Engagement | Client | CapacityRule;
 
-export function getEntity(db: DB, type: EntityType, id: string): Entity | null {
+export async function getEntity(ex: Exec, type: EntityType, id: string): Promise<Entity | null> {
   switch (type) {
-    case 'talent': { const r = db.prepare('SELECT * FROM talents WHERE id=?').get(id) as Row | undefined; return r ? talentFromRow(r) : null; }
-    case 'engagement': { const r = db.prepare('SELECT * FROM engagements WHERE id=?').get(id) as Row | undefined; return r ? engagementFromRow(r) : null; }
-    case 'client': { const r = db.prepare('SELECT * FROM clients WHERE id=?').get(id) as Client | undefined; return r ?? null; }
+    case 'talent': { const r = await one(ex, 'SELECT * FROM talents WHERE id=?', [id]); return r ? talentFromRow(r) : null; }
+    case 'engagement': { const r = await one(ex, 'SELECT * FROM engagements WHERE id=?', [id]); return r ? engagementFromRow(r) : null; }
+    case 'client': {
+      const r = await one(ex, 'SELECT id,name,industry,country,owner FROM clients WHERE id=?', [id]);
+      return r ? { id: r.id, name: r.name, industry: r.industry, country: r.country, owner: r.owner } : null;
+    }
     case 'capacityRule': {
       const [title, department] = id.split('__');
-      const r = db.prepare('SELECT * FROM capacity_rules WHERE title=? AND department=?').get(title, department) as Row | undefined;
+      const r = await one(ex, 'SELECT * FROM capacity_rules WHERE title=? AND department=?', [title, department]);
       return r ? ruleFromRow(r) : null;
     }
   }
 }
 
-export function entityId(type: EntityType, e: Entity): string {
-  return type === 'capacityRule' ? (e as CapacityRule).title + '__' + (e as CapacityRule).department : (e as Talent).id;
-}
-
-/** Insert-or-replace one entity, or delete it when `value` is null. */
-export function putEntity(db: DB, type: EntityType, id: string, value: Entity | null): void {
+/** Statement that inserts-or-replaces one entity, or deletes it when `value` is null. */
+export function putStatement(type: EntityType, id: string, value: Entity | null): InStatement {
   if (value === null) {
     if (type === 'capacityRule') {
       const [title, department] = id.split('__');
-      db.prepare('DELETE FROM capacity_rules WHERE title=? AND department=?').run(title, department);
-    } else {
-      const table = { talent: 'talents', engagement: 'engagements', client: 'clients' }[type];
-      db.prepare(`DELETE FROM ${table} WHERE id=?`).run(id);
+      return { sql: 'DELETE FROM capacity_rules WHERE title=? AND department=?', args: [title, department] };
     }
-    return;
+    const table = { talent: 'talents', engagement: 'engagements', client: 'clients' }[type];
+    return { sql: `DELETE FROM ${table} WHERE id=?`, args: [id] };
   }
   switch (type) {
     case 'talent': {
       const t = value as Talent;
-      db.prepare(`INSERT OR REPLACE INTO talents (id,name,initials,title,department,status,util_override,flag,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?)`).run(t.id, t.name, t.initials, t.title, t.department, t.status,
-        t.utilOverride ? JSON.stringify(t.utilOverride) : null, t.flag ? JSON.stringify(t.flag) : null, t.createdAt, t.updatedAt);
-      return;
+      return { sql: `INSERT OR REPLACE INTO talents (id,name,initials,title,department,status,util_override,flag,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        args: [t.id, t.name, t.initials, t.title, t.department, t.status, t.utilOverride ? JSON.stringify(t.utilOverride) : null, t.flag ? JSON.stringify(t.flag) : null, t.createdAt, t.updatedAt] };
     }
     case 'engagement': {
       const e = value as Engagement;
-      db.prepare(`INSERT OR REPLACE INTO engagements (id,name,client,country,sector,scope,sub_scope,stage,lead_id,team_ids,supervisor_id,
+      return { sql: `INSERT OR REPLACE INTO engagements (id,name,client,country,sector,scope,sub_scope,stage,lead_id,team_ids,supervisor_id,
         start_date,end_date,notes,workload_tier,custom_cps,price,cost,status,historical,allocation_overrides,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(e.id, e.name, e.client, e.country, e.sector, e.scope, e.subScope,
-        e.stage, e.leadId, JSON.stringify(e.teamIds), e.supervisorId, e.start, e.end, e.notes, e.workloadTier,
-        e.customCps ? JSON.stringify(e.customCps) : null, e.price, e.cost, e.status, e.historical ? 1 : 0,
-        JSON.stringify(e.allocationOverrides ?? {}), e.createdAt, e.updatedAt);
-      return;
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        args: [e.id, e.name, e.client, e.country, e.sector, e.scope, e.subScope, e.stage, e.leadId, JSON.stringify(e.teamIds), e.supervisorId,
+          e.start, e.end, e.notes, e.workloadTier, e.customCps ? JSON.stringify(e.customCps) : null, e.price, e.cost, e.status,
+          e.historical ? 1 : 0, JSON.stringify(e.allocationOverrides ?? {}), e.createdAt, e.updatedAt] };
     }
     case 'client': {
       const c = value as Client;
-      db.prepare('INSERT OR REPLACE INTO clients (id,name,industry,country,owner) VALUES (?,?,?,?,?)').run(c.id, c.name, c.industry, c.country, c.owner);
-      return;
+      return { sql: 'INSERT OR REPLACE INTO clients (id,name,industry,country,owner) VALUES (?,?,?,?,?)', args: [c.id, c.name, c.industry, c.country, c.owner] };
     }
     case 'capacityRule': {
       const r = value as CapacityRule;
-      db.prepare('INSERT OR REPLACE INTO capacity_rules (title,department,project,leadership,placeholder) VALUES (?,?,?,?,?)')
-        .run(r.title, r.department, r.project, r.leadership, r.placeholder ? 1 : 0);
-      return;
+      return { sql: 'INSERT OR REPLACE INTO capacity_rules (title,department,project,leadership,placeholder) VALUES (?,?,?,?,?)', args: [r.title, r.department, r.project, r.leadership, r.placeholder ? 1 : 0] };
     }
   }
 }
-
-export function getMeta(db: DB, key: string): string | null {
-  return (db.prepare('SELECT value FROM meta WHERE key=?').get(key) as { value: string } | undefined)?.value ?? null;
-}
-export function setMeta(db: DB, key: string, value: string): void {
-  db.prepare('INSERT OR REPLACE INTO meta (key,value) VALUES (?,?)').run(key, value);
+export async function putEntity(ex: Exec, type: EntityType, id: string, value: Entity | null): Promise<void> {
+  await ex.execute(putStatement(type, id, value));
 }
 
-export function isEmpty(db: DB): boolean {
-  return (db.prepare('SELECT COUNT(*) n FROM talents').get() as { n: number }).n === 0;
+export async function getMeta(ex: Exec, key: string): Promise<string | null> {
+  return (await one<{ value: string }>(ex, 'SELECT value FROM meta WHERE key=?', [key]))?.value ?? null;
+}
+export function setMetaStatement(key: string, value: string): InStatement {
+  return { sql: 'INSERT OR REPLACE INTO meta (key,value) VALUES (?,?)', args: [key, value] };
+}
+export async function setMeta(ex: Exec, key: string, value: string): Promise<void> {
+  await ex.execute(setMetaStatement(key, value));
 }
 
-/** Replace all business data with a seed file. Users and sessions are kept. */
-export function loadSeed(db: DB, seed: SeedFile): void {
-  db.transaction(() => {
-    for (const t of ['talents', 'engagements', 'clients', 'capacity_rules', 'trajectory', 'audit_log']) db.prepare(`DELETE FROM ${t}`).run();
-    seed.talents.forEach((t) => putEntity(db, 'talent', t.id, t));
-    seed.engagements.forEach((e) => putEntity(db, 'engagement', e.id, e));
-    seed.clients.forEach((c) => putEntity(db, 'client', c.id, c));
-    seed.capacityRules.forEach((r) => putEntity(db, 'capacityRule', r.title + '__' + r.department, r));
-    const ins = db.prepare('INSERT INTO trajectory (year,month,engagement,sector,scope,status,talent,talent_id,title,role,client) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
-    seed.trajectory.forEach((r) => ins.run(r.year, r.month, r.engagement, r.sector, r.scope, r.status, r.talent, r.talentId, r.title, r.role, r.client));
-    const audit = db.prepare(`INSERT INTO audit_log (at,user_id,user_name,action,entity_type,entity_id,entity_name,details) VALUES (?,?,?,?,?,?,?,?)`);
-    (seed.audit ?? []).forEach((a) => audit.run(a.at, null, a.userName, a.action, 'imported', '', a.entityName, a.details));
-    const version = Number(getMeta(db, 'version') ?? 0) + 1;
-    setMeta(db, 'version', String(version));
-    setMeta(db, 'updatedAt', new Date().toISOString());
-    setMeta(db, 'updatedBy', 'Seed: ' + seed.description);
-  })();
+export async function isEmpty(db: DB): Promise<boolean> {
+  return Number((await one(db, 'SELECT COUNT(*) AS n FROM talents'))!.n) === 0;
+}
+
+/** Replace all business data with a seed file, atomically. Users and sessions are kept. */
+export async function loadSeed(db: DB, seed: SeedFile): Promise<void> {
+  const version = Number((await getMeta(db, 'version')) ?? 0) + 1;
+  const stmts: InStatement[] = ['talents', 'engagements', 'clients', 'capacity_rules', 'trajectory', 'audit_log'].map((t) => `DELETE FROM ${t}`);
+  seed.talents.forEach((t) => stmts.push(putStatement('talent', t.id, t)));
+  seed.engagements.forEach((e) => stmts.push(putStatement('engagement', e.id, e)));
+  seed.clients.forEach((c) => stmts.push(putStatement('client', c.id, c)));
+  seed.capacityRules.forEach((r) => stmts.push(putStatement('capacityRule', r.title + '__' + r.department, r)));
+  seed.trajectory.forEach((r) => stmts.push({
+    sql: 'INSERT INTO trajectory (year,month,engagement,sector,scope,status,talent,talent_id,title,role,client) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    args: [r.year, r.month, r.engagement, r.sector, r.scope, r.status, r.talent, r.talentId, r.title, r.role, r.client],
+  }));
+  (seed.audit ?? []).forEach((a) => stmts.push({
+    sql: 'INSERT INTO audit_log (at,user_id,user_name,action,entity_type,entity_id,entity_name,details) VALUES (?,?,?,?,?,?,?,?)',
+    args: [a.at, null, a.userName, a.action, 'imported', '', a.entityName, a.details],
+  }));
+  stmts.push(setMetaStatement('version', String(version)), setMetaStatement('updatedAt', new Date().toISOString()), setMetaStatement('updatedBy', 'Seed: ' + seed.description));
+  await db.batch(stmts, 'write');
 }

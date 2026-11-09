@@ -177,7 +177,7 @@ export function Layout() {
           <button className="mobile-menu-btn" aria-label="Open menu" onClick={() => setMenu(!menu)}>☰</button>
           <div className="topbar-title"><h1>{page?.group === 'Engagement Excellence OS' && page.to === '/' ? 'Engagement Excellence OS' : page?.group ?? 'EEOS'}</h1><p>{page?.title ?? ''}</p></div>
           <div className="topbar-right">
-            <div className="pill-btn" style={{ fontSize: 10.5, color: live ? 'var(--text-faint)' : 'var(--warn)' }} title={live ? 'Live — changes from teammates appear automatically' : 'Reconnecting to live updates…'}>
+            <div className="pill-btn" style={{ fontSize: 10.5, color: live ? 'var(--text-faint)' : 'var(--warn)' }} title={live ? 'Synced — teammates’ changes appear within a few seconds' : 'Can’t reach the server — retrying…'}>
               {live ? '🟢' : '🟠'} {last ? `Last edit: ${data.updatedBy?.startsWith('Seed') ? 'import' : data.updatedBy} · ${last.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Live'}
             </div>
             <button className="icon-btn" title="Refresh" onClick={async () => { setSpin(true); await refresh(); setTimeout(() => setSpin(false), 600); }}><span className={spin ? 'spin' : ''} style={{ display: 'inline-block' }}>🔄</span></button>

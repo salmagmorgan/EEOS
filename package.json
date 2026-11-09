@@ -15,12 +15,13 @@
     "import:artifact": "tsx server/seed/import-artifact.ts",
     "create-user": "tsx server/seed/create-user.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:web": "tsc --noEmit && vite build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
+    "@libsql/client": "^0.18.0",
     "@tanstack/react-query": "^5.107.1",
-    "better-sqlite3": "^13.0.3",
     "cookie-parser": "^1.4.7",
     "express": "^4.22.3",
     "react": "^18.3.1",
@@ -29,13 +30,13 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^9.6.0",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^4.17.25",
     "@types/node": "^22.20.5",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@types/supertest": "^7.2.1",
+    "@vercel/node": "^30.0.0",
     "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^10.0.7",
     "esbuild": "^0.28.2",

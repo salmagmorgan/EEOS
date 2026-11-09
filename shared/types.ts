@@ -1,4 +1,4 @@
-import type { StageId, WorkloadTier } from './constants';
+import type { StageId, WorkloadTier } from './constants.js';
 
 export type Role = 'admin' | 'editor' | 'viewer';
 

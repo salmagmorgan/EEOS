@@ -1,7 +1,7 @@
 /* Critical Path Schedule (CPS), lifecycle progress, health and priority.
    All dates are handled in UTC so results are identical on the server and in any browser. */
-import { LIFECYCLE, SCOPE_STAGES, type Scope, type StageDef, type StageId } from './constants';
-import type { CpsStage, Engagement } from './types';
+import { LIFECYCLE, SCOPE_STAGES, type Scope, type StageDef, type StageId } from './constants.js';
+import type { CpsStage, Engagement } from './types.js';
 
 const DAY = 86_400_000;
 

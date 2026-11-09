@@ -1,7 +1,7 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { ZodError, type ZodTypeAny, type z } from 'zod';
-import type { User } from '../../shared/types';
-import { HttpError } from '../store';
+import type { User } from '../../shared/types.js';
+import { HttpError } from '../store.js';
 
 /** Wrap a handler so thrown HttpErrors / validation errors become clean JSON responses. */
 export function route(fn: (req: Request, res: Response) => unknown): RequestHandler {

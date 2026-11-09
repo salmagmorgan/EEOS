@@ -3,12 +3,13 @@ import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../server/app';
 import { createUser } from '../server/auth';
-import { loadSeed, openDb } from '../server/db';
+import { loadSeed, migrate, openDb } from '../server/db';
 
 const db = openDb(':memory:');
-loadSeed(db, JSON.parse(fs.readFileSync('server/seed/demo-seed.json', 'utf8')));
-createUser(db, { name: 'Ada Admin', email: 'admin@test.dev', role: 'admin', password: 'correct-horse-1' });
-createUser(db, { name: 'Vic Viewer', email: 'viewer@test.dev', role: 'viewer', password: 'correct-horse-2' });
+await migrate(db);
+await loadSeed(db, JSON.parse(fs.readFileSync('server/seed/demo-seed.json', 'utf8')));
+await createUser(db, { name: 'Ada Admin', email: 'admin@test.dev', role: 'admin', password: 'correct-horse-1' });
+await createUser(db, { name: 'Vic Viewer', email: 'viewer@test.dev', role: 'viewer', password: 'correct-horse-2' });
 const app = createApp(db, { cookieSecure: false, demoSeedPath: 'server/seed/demo-seed.json', copilotModel: 'claude-opus-5-5' });
 
 const login = async (email: string, password: string) => {
@@ -80,6 +81,13 @@ describe('API', () => {
     const res = await admin.post('/api/engagements').set('X-EEOS', '1').send({ name: '', client: 'C', sector: 'S', scope: 'Research', leadId: 'nobody' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/name/);
+  });
+
+  it('reports the workspace version for change polling', async () => {
+    const before = (await viewer.get('/api/version').expect(200)).body.version;
+    const w = (await admin.get('/api/workspace')).body;
+    await admin.put(`/api/talents/${w.talents[0].id}/flag`).set('X-EEOS', '1').send({ flagged: true }).expect(200);
+    expect((await viewer.get('/api/version')).body.version).toBe(before + 1);
   });
 
   it('exports CSV', async () => {

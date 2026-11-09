@@ -12,10 +12,10 @@
    The output is loaded with `npm run seed -- <seed.json>` (or set SEED_PATH before first start). */
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { SCOPE_STAGES, STAGE_IDS, WORKLOAD_TIER_NAMES, type StageId, type WorkloadTier } from '../../shared/constants';
-import { initialsOf } from '../../shared/engine';
-import { addDays, scopeStages, toDay } from '../../shared/schedule';
-import type { CapacityRule, Client, CpsStage, Engagement, SeedFile, Talent, TrajectoryRow } from '../../shared/types';
+import { SCOPE_STAGES, STAGE_IDS, WORKLOAD_TIER_NAMES, type StageId, type WorkloadTier } from '../../shared/constants.js';
+import { initialsOf } from '../../shared/engine.js';
+import { addDays, scopeStages, toDay } from '../../shared/schedule.js';
+import type { CapacityRule, Client, CpsStage, Engagement, SeedFile, Talent, TrajectoryRow } from '../../shared/types.js';
 
 type Literal = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 

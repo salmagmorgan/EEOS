@@ -1,41 +1,42 @@
 import fs from 'node:fs';
 import { Router } from 'express';
 import { z } from 'zod';
-import { buildModel } from '../../shared/engine';
-import { stageLabel, toCsv } from '../../shared/schedule';
-import type { SeedFile } from '../../shared/types';
-import { requireRole } from '../auth';
-import { type DB, loadSeed } from '../db';
-import { HttpError, auditPeople, broadcast, lastUndoable, listAudit, readWorkspace, subscribe, undo } from '../store';
-import { me, parse, route } from './util';
+import { buildModel } from '../../shared/engine.js';
+import { stageLabel, toCsv } from '../../shared/schedule.js';
+import type { SeedFile } from '../../shared/types.js';
+import { requireRole } from '../auth.js';
+import { type DB, loadSeed } from '../db.js';
+import { HttpError, auditPeople, lastUndoable, listAudit, readVersion, readWorkspace, undo } from '../store.js';
+import { parse, route, me } from './util.js';
 
 export function workspaceRoutes(db: DB, opts: { demoSeedPath: string }): Router {
   const r = Router();
   const viewer = requireRole('viewer');
 
   r.get('/workspace', viewer, route(() => readWorkspace(db)));
-  r.get('/events', viewer, (_req, res) => subscribe(res));
+  // Cheap change check the web app polls to pick up teammates' edits.
+  r.get('/version', viewer, route(() => readVersion(db)));
 
   // ---- audit trail & undo ----
-  r.get('/audit', viewer, route((req) => ({
-    entries: listAudit(db, { q: String(req.query.q ?? ''), user: String(req.query.user ?? ''), limit: Number(req.query.limit ?? 300) }),
-    people: auditPeople(db),
-    lastUndoable: req.user ? lastUndoable(db, req.user.id) : null,
+  r.get('/audit', viewer, route(async (req) => ({
+    entries: await listAudit(db, { q: String(req.query.q ?? ''), user: String(req.query.user ?? ''), limit: Number(req.query.limit ?? 300) }),
+    people: await auditPeople(db),
+    lastUndoable: req.user ? await lastUndoable(db, req.user.id) : null,
   })));
-  r.post('/audit/:id/undo', requireRole('editor'), route((req) => {
-    undo(db, me(req), Number(req.params.id));
+  r.post('/audit/:id/undo', requireRole('editor'), route(async (req) => {
+    await undo(db, me(req), Number(req.params.id));
     return { ok: true };
   }));
-  r.post('/audit/undo-last', requireRole('editor'), route((req) => {
-    const id = lastUndoable(db, me(req).id);
+  r.post('/audit/undo-last', requireRole('editor'), route(async (req) => {
+    const id = await lastUndoable(db, me(req).id);
     if (!id) throw new HttpError(409, 'Nothing of yours to undo.');
-    undo(db, me(req), id);
+    await undo(db, me(req), id);
     return { ok: true, undid: id };
   }));
 
   // ---- CSV exports (computed with the same engine as the UI) ----
-  r.get('/export/:kind.csv', viewer, route((req, res) => {
-    const m = buildModel(readWorkspace(db));
+  r.get('/export/:kind.csv', viewer, route(async (req, res) => {
+    const m = buildModel(await readWorkspace(db));
     let csv: string;
     switch (req.params.kind) {
       case 'engagements':
@@ -66,8 +67,8 @@ export function workspaceRoutes(db: DB, opts: { demoSeedPath: string }): Router 
   }));
 
   // ---- full backup / restore (admins) ----
-  r.get('/admin/backup', requireRole('admin'), route((_req, res) => {
-    const w = readWorkspace(db);
+  r.get('/admin/backup', requireRole('admin'), route(async (_req, res) => {
+    const w = await readWorkspace(db);
     const seed: SeedFile = {
       generatedAt: new Date().toISOString(), description: 'EEOS backup',
       talents: w.talents, engagements: w.engagements, clients: w.clients, capacityRules: w.capacityRules,
@@ -80,16 +81,16 @@ export function workspaceRoutes(db: DB, opts: { demoSeedPath: string }): Router 
   const seedSchema = z.object({
     talents: z.array(z.any()), engagements: z.array(z.any()), clients: z.array(z.any()), capacityRules: z.array(z.any()), trajectory: z.array(z.any()),
   }).passthrough();
-  r.post('/admin/restore', requireRole('admin'), route((req) => {
+  r.post('/admin/restore', requireRole('admin'), route(async (req) => {
     const seed = parse(seedSchema, req.body) as unknown as SeedFile;
-    seed.description ??= 'Restored backup';
-    loadSeed(db, seed);
-    broadcast({ type: 'changed', by: me(req).name });
+    seed.description ??= `Restored backup (by ${me(req).name})`;
+    await loadSeed(db, seed);
     return { ok: true };
   }));
-  r.post('/admin/reset-demo', requireRole('admin'), route((req) => {
-    loadSeed(db, JSON.parse(fs.readFileSync(opts.demoSeedPath, 'utf8')));
-    broadcast({ type: 'changed', by: me(req).name });
+  r.post('/admin/reset-demo', requireRole('admin'), route(async (req) => {
+    const seed: SeedFile = JSON.parse(fs.readFileSync(opts.demoSeedPath, 'utf8'));
+    seed.description += ` (reset by ${me(req).name})`;
+    await loadSeed(db, seed);
     return { ok: true };
   }));
 

@@ -7,9 +7,9 @@ import {
   DEPARTMENTS, EXCLUDED_FROM_AUTO_STAFFING_DEPARTMENTS, EXCLUDED_FROM_AUTO_STAFFING_TITLES, FALLBACK_CAPACITY,
   LEADER_CONCENTRATION_THRESHOLD, MONTHS, RECOMMENDATION_WEIGHTS, SUPERVISOR_ALLOCATION_PCT, TITLES, UTIL_BANDS,
   WORKLOAD_TIERS,
-} from './constants';
-import { health, parseDay, priority, scheduleInfo, stageLabel, type Health } from './schedule';
-import type { CapacityRule, Client, Engagement, Talent, WorkspaceData } from './types';
+} from './constants.js';
+import { health, parseDay, priority, scheduleInfo, stageLabel, type Health } from './schedule.js';
+import type { CapacityRule, Client, Engagement, Talent, WorkspaceData } from './types.js';
 
 export type UtilStatus = 'Not Allocated' | 'Underutilized' | 'Optimal' | 'At Capacity' | 'Overutilized';
 export const UTIL_STATUSES: UtilStatus[] = ['Underutilized', 'Optimal', 'At Capacity', 'Overutilized', 'Not Allocated'];

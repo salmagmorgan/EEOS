@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
-import type { Role, User } from '../shared/types';
-import type { DB } from './db';
+import type { Role, User } from '../shared/types.js';
+import { type DB, all, one, run } from './db.js';
 
 export const SESSION_COOKIE = 'eeos_session';
 const SESSION_DAYS = 14;
@@ -31,48 +31,61 @@ export function validatePassword(pw: string): string | null {
 }
 
 // ---------- users ----------
-type UserRow = { id: string; name: string; email: string; role: Role; disabled: number; created_at: string; password_hash: string };
+export type UserRow = { id: string; name: string; email: string; role: Role; disabled: number; created_at: string; password_hash: string };
 export const userFromRow = (r: UserRow): User => ({ id: r.id, name: r.name, email: r.email, role: r.role, disabled: !!r.disabled, createdAt: r.created_at });
 
-export function createUser(db: DB, u: { name: string; email: string; role: Role; password: string }): User {
+export async function createUser(db: DB, u: { name: string; email: string; role: Role; password: string }): Promise<User> {
   const id = 'u_' + crypto.randomBytes(8).toString('hex');
-  db.prepare('INSERT INTO users (id,name,email,password_hash,role,disabled,created_at) VALUES (?,?,?,?,?,0,?)')
-    .run(id, u.name.trim(), u.email.trim().toLowerCase(), hashPassword(u.password), u.role, new Date().toISOString());
-  return userFromRow(db.prepare('SELECT * FROM users WHERE id=?').get(id) as UserRow);
+  await run(db, 'INSERT INTO users (id,name,email,password_hash,role,disabled,created_at) VALUES (?,?,?,?,?,0,?)',
+    [id, u.name.trim(), u.email.trim().toLowerCase(), hashPassword(u.password), u.role, new Date().toISOString()]);
+  return userFromRow((await getUserRow(db, id))!);
 }
-export function findUserByEmail(db: DB, email: string): UserRow | undefined {
-  return db.prepare('SELECT * FROM users WHERE email=?').get(email.trim().toLowerCase()) as UserRow | undefined;
+export async function getUserRow(db: DB, id: string): Promise<UserRow | undefined> {
+  return one<UserRow>(db, 'SELECT * FROM users WHERE id=?', [id]);
 }
-export function userCount(db: DB): number {
-  return (db.prepare('SELECT COUNT(*) n FROM users').get() as { n: number }).n;
+export async function findUserByEmail(db: DB, email: string): Promise<UserRow | undefined> {
+  return one<UserRow>(db, 'SELECT * FROM users WHERE email=?', [email.trim().toLowerCase()]);
+}
+export async function listUsers(db: DB): Promise<User[]> {
+  return (await all<UserRow>(db, 'SELECT * FROM users ORDER BY created_at')).map(userFromRow);
+}
+export async function userCount(db: DB): Promise<number> {
+  return Number((await one(db, 'SELECT COUNT(*) AS n FROM users'))!.n);
 }
 
 // ---------- sessions ----------
 const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
-export function createSession(db: DB, userId: string): { token: string; expires: Date } {
+export async function createSession(db: DB, userId: string): Promise<{ token: string; expires: Date }> {
   const token = crypto.randomBytes(32).toString('base64url');
   const expires = new Date(Date.now() + SESSION_DAYS * 86_400_000);
-  db.prepare('INSERT INTO sessions (token_hash,user_id,created_at,expires_at) VALUES (?,?,?,?)').run(sha(token), userId, new Date().toISOString(), expires.toISOString());
-  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(new Date().toISOString());
+  const now = new Date().toISOString();
+  await db.batch([
+    { sql: 'INSERT INTO sessions (token_hash,user_id,created_at,expires_at) VALUES (?,?,?,?)', args: [sha(token), userId, now, expires.toISOString()] },
+    { sql: 'DELETE FROM sessions WHERE expires_at < ?', args: [now] },
+  ], 'write');
   return { token, expires };
 }
-export function destroySession(db: DB, token: string): void {
-  db.prepare('DELETE FROM sessions WHERE token_hash=?').run(sha(token));
+export async function destroySession(db: DB, token: string): Promise<void> {
+  await run(db, 'DELETE FROM sessions WHERE token_hash=?', [sha(token)]);
 }
-export function destroyUserSessions(db: DB, userId: string): void {
-  db.prepare('DELETE FROM sessions WHERE user_id=?').run(userId);
+export async function destroyUserSessions(db: DB, userId: string): Promise<void> {
+  await run(db, 'DELETE FROM sessions WHERE user_id=?', [userId]);
 }
 
 export function authenticate(db: DB) {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const token = req.cookies?.[SESSION_COOKIE];
-    if (token) {
-      const row = db.prepare(`SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=? AND s.expires_at > ?`)
-        .get(sha(token), new Date().toISOString()) as UserRow | undefined;
-      if (row && !row.disabled) req.user = userFromRow(row);
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      const token = req.cookies?.[SESSION_COOKIE];
+      if (token) {
+        const row = await one<UserRow>(db, 'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=? AND s.expires_at > ?',
+          [sha(token), new Date().toISOString()]);
+        if (row && !row.disabled) req.user = userFromRow(row);
+      }
+      next();
+    } catch (e) {
+      next(e);
     }
-    next();
   };
 }
 

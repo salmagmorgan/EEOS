@@ -2,12 +2,13 @@ import cookieParser from 'cookie-parser';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { authenticate, csrfGuard } from './auth';
-import type { DB } from './db';
-import { authRoutes } from './routes/auth';
-import { copilotRoutes } from './routes/copilot';
-import { entityRoutes } from './routes/entities';
-import { workspaceRoutes } from './routes/workspace';
+import { authenticate, csrfGuard } from './auth.js';
+import { SetupError } from './bootstrap.js';
+import type { DB } from './db.js';
+import { authRoutes } from './routes/auth.js';
+import { copilotRoutes } from './routes/copilot.js';
+import { entityRoutes } from './routes/entities.js';
+import { workspaceRoutes } from './routes/workspace.js';
 
 export interface AppConfig {
   cookieSecure: boolean;
@@ -16,9 +17,10 @@ export interface AppConfig {
   copilotModel: string;
   /** Directory with the built web app; served when present. */
   staticDir?: string;
+  onVercel?: boolean;
 }
 
-export function createApp(db: DB, config: AppConfig) {
+export function createApp(db: DB, config: AppConfig, ready: Promise<void> = Promise.resolve()) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
@@ -30,8 +32,19 @@ export function createApp(db: DB, config: AppConfig) {
   });
   app.use(express.json({ limit: '25mb' }));
   app.use(cookieParser());
+  app.get('/api/health', async (_req, res) => {
+    try { await ready; res.json({ ok: true }); } catch (e) { res.status(503).json({ ok: false, error: (e as Error).message }); }
+  });
+  // Wait for database setup (migrations, seed, first admin) before handling anything.
+  app.use('/api', async (_req, res, next) => {
+    try {
+      await ready;
+      next();
+    } catch (e) {
+      res.status(503).json({ error: e instanceof SetupError ? e.message : 'EEOS could not connect to its database. Check DATABASE_URL / TURSO_DATABASE_URL and the auth token.' });
+    }
+  });
   app.use('/api', authenticate(db), csrfGuard);
-  app.get('/api/health', (_req, res) => res.json({ ok: true }));
   app.use('/api', authRoutes(db, { cookieSecure: config.cookieSecure }));
   app.use('/api', workspaceRoutes(db, { demoSeedPath: config.demoSeedPath }));
   app.use('/api', entityRoutes(db));

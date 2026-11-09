@@ -4,11 +4,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { Router } from 'express';
 import { z } from 'zod';
-import { buildModel } from '../../shared/engine';
-import { requireRole } from '../auth';
-import type { DB } from '../db';
-import { readWorkspace } from '../store';
-import { parse, route } from './util';
+import { buildModel } from '../../shared/engine.js';
+import { requireRole } from '../auth.js';
+import type { DB } from '../db.js';
+import { readWorkspace } from '../store.js';
+import { parse, route } from './util.js';
 
 const INSTRUCTIONS = `You are the AI Copilot inside The Board Consulting's Engagement Excellence Operating System (EEOS).
 You brief partners and managers on staffing, utilization, engagement health, hiring gaps and team rotation.
@@ -35,7 +35,7 @@ export function copilotRoutes(db: DB, opts: { apiKey?: string; model: string }):
     let messages = body.messages.slice(-12);
     while (messages.length && messages[0].role !== 'user') messages = messages.slice(1);
 
-    const model = buildModel(readWorkspace(db));
+    const model = buildModel(await readWorkspace(db));
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
     const controller = new AbortController();
     res.on('close', () => controller.abort());

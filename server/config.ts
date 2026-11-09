@@ -10,20 +10,27 @@ export function loadEnvFile(file = '.env'): void {
   }
 }
 
+export type Config = ReturnType<typeof config>;
+
 export function config() {
   loadEnvFile();
   const env = process.env;
+  const onVercel = !!env.VERCEL;
   return {
+    onVercel,
     port: Number(env.PORT ?? 8787),
-    databasePath: env.DATABASE_PATH ?? './data/eeos.db',
-    seedPath: env.SEED_PATH ?? './server/seed/demo-seed.json',
-    demoSeedPath: path.resolve('./server/seed/demo-seed.json'),
-    cookieSecure: env.COOKIE_SECURE === 'true',
+    /** libsql URL. Turso in production (libsql://…), a local file in development. */
+    databaseUrl: env.DATABASE_URL || env.TURSO_DATABASE_URL || './data/eeos.db',
+    databaseAuthToken: env.DATABASE_AUTH_TOKEN || env.TURSO_AUTH_TOKEN || undefined,
+    // process.cwd() is the project root locally and on Vercel (/var/task).
+    seedPath: path.resolve(process.cwd(), env.SEED_PATH ?? 'server/seed/demo-seed.json'),
+    demoSeedPath: path.resolve(process.cwd(), 'server/seed/demo-seed.json'),
+    cookieSecure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : onVercel,
     adminEmail: env.ADMIN_EMAIL,
     adminPassword: env.ADMIN_PASSWORD,
     adminName: env.ADMIN_NAME ?? 'EEOS Admin',
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
     copilotModel: env.COPILOT_MODEL || 'claude-opus-5-5',
-    staticDir: path.resolve('./dist/client'),
+    staticDir: onVercel ? undefined : path.resolve(process.cwd(), 'dist/client'),
   };
 }

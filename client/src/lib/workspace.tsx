@@ -30,18 +30,30 @@ export const useModel = () => useWorkspace().model;
 export function WorkspaceProvider({ user, setUser, children }: { user: User; setUser: (u: User | null) => void; children: ReactNode }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [live, setLive] = useState(false);
+  const [live, setLive] = useState(true);
   const [tick, setTick] = useState(0);
   const query = useQuery({ queryKey: ['workspace'], queryFn: () => api.get<WorkspaceData>('/workspace'), staleTime: 60_000 });
 
-  // Live updates: the server pushes a message after every change; refetch when it arrives.
+  // Teammates' changes: check the workspace version every few seconds (while the tab is visible)
+  // and refetch only when it moved. Works on serverless hosts, which can't hold a push connection open.
+  const version = query.data?.version;
   useEffect(() => {
-    let es: EventSource | null = new EventSource('/api/events');
-    es.onopen = () => setLive(true);
-    es.onerror = () => setLive(false);
-    es.onmessage = () => qc.invalidateQueries({ queryKey: ['workspace'] });
-    return () => { es?.close(); es = null; };
-  }, [qc]);
+    let stopped = false;
+    const check = async () => {
+      if (document.hidden) return;
+      try {
+        const v = await api.get<{ version: number }>('/version');
+        if (stopped) return;
+        setLive(true);
+        if (version !== undefined && v.version !== version) qc.invalidateQueries({ queryKey: ['workspace'] });
+      } catch {
+        if (!stopped) setLive(false);
+      }
+    };
+    const id = setInterval(check, 5000);
+    document.addEventListener('visibilitychange', check);
+    return () => { stopped = true; clearInterval(id); document.removeEventListener('visibilitychange', check); };
+  }, [qc, version]);
 
   // "Now" moves on: recompute time-based health every minute.
   useEffect(() => {
