@@ -1,29 +1,54 @@
 import fs from 'node:fs';
 import request from 'supertest';
+import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../server/app';
 import { createUser } from '../server/auth';
-import { loadSeed, migrate, openDb } from '../server/db';
+import { type DB, type PgLike, loadSeed, migrate, openDb, postgresDb } from '../server/db';
 
-const db = openDb(':memory:');
-await migrate(db);
-await loadSeed(db, JSON.parse(fs.readFileSync('server/seed/demo-seed.json', 'utf8')));
-await createUser(db, { name: 'Ada Admin', email: 'admin@test.dev', role: 'admin', password: 'correct-horse-1' });
-await createUser(db, { name: 'Vic Viewer', email: 'viewer@test.dev', role: 'viewer', password: 'correct-horse-2' });
-const app = createApp(db, { cookieSecure: false, demoSeedPath: 'server/seed/demo-seed.json', copilotModel: 'claude-opus-5-5' });
+/** In-process Postgres, so the Postgres code path is tested without a server. */
+function pglite(): DB {
+  const pg = new PGlite();
+  const conn: PgLike = {
+    query: (t, p) => pg.query(t, p as unknown[]) as Promise<{ rows: Record<string, unknown>[] }>,
+    inTransaction: (fn) => pg.transaction((tx) => fn((t, p) => tx.query(t, p as unknown[]) as Promise<{ rows: Record<string, unknown>[] }>)),
+    end: () => pg.close(),
+  };
+  return postgresDb(conn);
+}
 
-const login = async (email: string, password: string) => {
-  const agent = request.agent(app);
-  await agent.post('/api/auth/login').set('X-EEOS', '1').send({ email, password }).expect(200);
-  return agent;
-};
-
-describe('API', () => {
-  let admin: Awaited<ReturnType<typeof login>>;
-  let viewer: Awaited<ReturnType<typeof login>>;
+describe.each([
+  ['SQLite', () => openDb(':memory:')],
+  ['Postgres', pglite],
+])('API on %s', (_name, makeDb) => {
+  let app: ReturnType<typeof createApp>;
+  let admin: request.Agent;
+  let viewer: request.Agent;
+  const login = async (email: string, password: string) => {
+    const agent = request.agent(app);
+    await agent.post('/api/auth/login').set('X-EEOS', '1').send({ email, password }).expect(200);
+    return agent;
+  };
   beforeAll(async () => {
+    const db = makeDb();
+    await migrate(db);
+    await migrate(db); // idempotent
+    await loadSeed(db, JSON.parse(fs.readFileSync('server/seed/demo-seed.json', 'utf8')));
+    await createUser(db, { name: 'Ada Admin', email: 'admin@test.dev', role: 'admin', password: 'correct-horse-1' });
+    await createUser(db, { name: 'Vic Viewer', email: 'viewer@test.dev', role: 'viewer', password: 'correct-horse-2' });
+    app = createApp(db, { cookieSecure: false, demoSeedPath: 'server/seed/demo-seed.json', copilotModel: 'claude-opus-5-5' });
     admin = await login('admin@test.dev', 'correct-horse-1');
     viewer = await login('viewer@test.dev', 'correct-horse-2');
+  }, 60_000);
+
+  it('loads the seed with insertion order and types intact', async () => {
+    const w = (await viewer.get('/api/workspace').expect(200)).body;
+    const seed = JSON.parse(fs.readFileSync('server/seed/demo-seed.json', 'utf8'));
+    expect(w.talents.map((t: { id: string }) => t.id)).toEqual(seed.talents.map((t: { id: string }) => t.id));
+    expect(w.engagements).toHaveLength(seed.engagements.length);
+    expect(typeof w.trajectory[0].year).toBe('number');
+    expect(typeof w.trajectory[0].id).toBe('number');
+    expect(typeof w.engagements[0].historical).toBe('boolean');
   });
 
   it('requires sign-in', async () => {

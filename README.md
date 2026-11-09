@@ -7,7 +7,7 @@ This is the production build of the single-file EEOS prototype. It keeps the pro
 | Prototype | This build |
 |---|---|
 | Everything in one 4,000-line HTML file | React + TypeScript web app, Node/Express API, shared domain engine |
-| One shared JSON blob of overrides on hard-coded data | Normalized SQL database — a local SQLite file in development, Turso (hosted SQLite) in production |
+| One shared JSON blob of overrides on hard-coded data | Normalized SQL database — Postgres (e.g. Neon), Turso, or a local SQLite file |
 | "Type your name, pick Editor or Viewer" (honour system) | Real accounts: email + password, sessions, **admin / editor / viewer** roles enforced on the server |
 | Undo = restore a whole-store snapshot from this browser tab | Every change is audited with before/after; any change can be undone safely from the Audit Trail (or "undo my last change") |
 | Polling the whole store every 20 seconds | A tiny version check every 5 seconds; data is refetched only when something changed |
@@ -51,7 +51,7 @@ The committed demo seed has every person, client and engagement name replaced, b
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | `./data/eeos.db` | A local file path, or a Turso URL (`libsql://…`). `TURSO_DATABASE_URL` also works |
+| `DATABASE_URL` | `./data/eeos.db` | Postgres (`postgres://…`, e.g. Neon), Turso (`libsql://…`), or a local file path. `POSTGRES_URL` / `TURSO_DATABASE_URL` also work |
 | `DATABASE_AUTH_TOKEN` | — | Turso auth token. `TURSO_AUTH_TOKEN` also works |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | — | First admin account (only used while no users exist) |
 | `SEED_PATH` | demo seed | Loaded into an empty database on first start |
@@ -64,20 +64,19 @@ More users can also be created from the command line: `npm run create-user -- so
 
 ## Deploying to Vercel
 
-Vercel runs the web app as static files and the API as one serverless function (`api/index.ts`); `vercel.json` already configures both. Serverless functions have no lasting disk, so the data lives in **Turso** (hosted SQLite, free tier).
+Vercel runs the web app as static files and the API as one serverless function (`api/index.ts`); `vercel.json` already configures both. Serverless functions have no lasting disk, so the data lives in a hosted database: **Neon Postgres** or **Turso** (both have free tiers and are in Vercel's Storage tab).
 
-1. **Create the database.** Easiest: in your Vercel project open **Storage → Create / Connect → Turso** (Marketplace) and create a database; it adds `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` to the project for you. Alternatively create one at turso.tech and copy its URL and a token.
+1. **Create the database.** In your Vercel project open **Storage → Create Database**, pick **Neon** (Postgres) or **Turso**, and connect it to the project. It adds the connection variables (`DATABASE_URL`, or `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`) for you.
 2. **Import the repo** in Vercel (**Add New → Project → salmagmorgan/EEOS**). Leave Framework Preset as **Other**; build settings come from `vercel.json`.
 3. **Add environment variables** (Project → Settings → Environment Variables):
    - `ADMIN_EMAIL` and `ADMIN_PASSWORD` (10+ characters) — your first login
-   - `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` if step 1 didn't add them
    - `ANTHROPIC_API_KEY` to turn on the Copilot (optional)
 4. **Deploy** (or Redeploy, so the new variables are picked up). The first request creates the tables, loads the demo data and creates your admin account. Visit `https://<your-app>.vercel.app/api/health` — it should say `{"ok":true}`; if not, it says what's missing.
 
-To load your real data into the Turso database, run from your computer:
+To load your real data into the hosted database, run from your computer (use the same `DATABASE_URL` Vercel shows; Turso also needs `DATABASE_AUTH_TOKEN`):
 
 ```bash
-DATABASE_URL=libsql://<db>-<org>.turso.io DATABASE_AUTH_TOKEN=<token> npm run seed -- data/real-seed.json
+DATABASE_URL='postgres://…' npm run seed -- data/real-seed.json
 ```
 
 or upload the seed file under **Data Management → Backup & restore** (Vercel limits uploads to about 4.5 MB, plenty for EEOS data).
@@ -106,7 +105,7 @@ api/index.ts       Vercel serverless entry point
 server/
   index.ts         Long-running server entry point (local, Docker)
   bootstrap.ts     Migrations, first-run seed and first admin (runs at every start / cold start)
-  db.ts            Schema (migrations), row mapping, seed loading — libSQL client (local file or Turso)
+  db.ts            Schema (migrations), row mapping, seed loading — one interface over Postgres and SQLite/Turso
   auth.ts          scrypt passwords, sessions, role checks, CSRF guard, login throttling
   store.ts         Workspace reads, audited mutations, safe undo, version for change polling
   routes/          auth & users · workspace/audit/exports/backup · entities · copilot

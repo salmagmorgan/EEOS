@@ -19,8 +19,8 @@ export function config() {
   return {
     onVercel,
     port: Number(env.PORT ?? 8787),
-    /** libsql URL. Turso in production (libsql://…), a local file in development. */
-    databaseUrl: env.DATABASE_URL || env.TURSO_DATABASE_URL || './data/eeos.db',
+    /** Postgres (postgres://… — e.g. Neon from Vercel's Storage tab), Turso (libsql://…), or a local file path. */
+    databaseUrl: env.TURSO_DATABASE_URL || env.DATABASE_URL || env.POSTGRES_URL || './data/eeos.db',
     databaseAuthToken: env.DATABASE_AUTH_TOKEN || env.TURSO_AUTH_TOKEN || undefined,
     // process.cwd() is the project root locally and on Vercel (/var/task).
     seedPath: path.resolve(process.cwd(), env.SEED_PATH ?? 'server/seed/demo-seed.json'),

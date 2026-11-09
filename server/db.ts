@@ -1,12 +1,107 @@
-import { createClient, type Client as LibsqlClient, type InArgs, type InStatement, type Transaction } from '@libsql/client';
+import { createClient, type InArgs } from '@libsql/client';
 import fs from 'node:fs';
 import path from 'node:path';
+import pg from 'pg';
 import type { CapacityRule, Client, Engagement, SeedFile, Talent, TrajectoryRow } from '../shared/types.js';
 
-/** The database: a local SQLite file in development, Turso (hosted libSQL) in production. */
-export type DB = LibsqlClient;
-/** Anything that can run a statement — the client itself or an open transaction. */
-export type Exec = Pick<LibsqlClient | Transaction, 'execute'>;
+/* EEOS runs on either of two databases, behind one small interface:
+   - SQLite: a local file in development, or Turso (hosted SQLite) in production
+   - Postgres: e.g. Neon, which Vercel's Storage tab offers
+   SQL is written once in a portable subset (`?` placeholders, ON CONFLICT upserts). */
+
+export type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+export interface Stmt { sql: string; args?: unknown[] }
+export type StmtLike = Stmt | string;
+/** Anything that can run a statement — the database itself or an open transaction. */
+export interface Exec { execute(stmt: StmtLike): Promise<{ rows: Row[] }> }
+export interface DB extends Exec {
+  dialect: 'sqlite' | 'postgres';
+  /** Run several statements atomically, returning each result. */
+  batch(stmts: StmtLike[], mode?: 'read' | 'write'): Promise<{ rows: Row[] }[]>;
+  transaction<T>(fn: (tx: Exec) => Promise<T>): Promise<T>;
+  close(): Promise<void>;
+}
+const norm = (s: StmtLike): Stmt => (typeof s === 'string' ? { sql: s, args: [] } : s);
+
+function sqliteDb(url: string, authToken?: string): DB {
+  const client = createClient({ url, authToken: authToken || undefined });
+  const exec = (target: { execute: typeof client.execute }) => async (s: StmtLike) => {
+    const st = norm(s);
+    return { rows: (await target.execute({ sql: st.sql, args: (st.args ?? []) as InArgs })).rows as Row[] };
+  };
+  return {
+    dialect: 'sqlite',
+    execute: exec(client),
+    async batch(stmts, mode = 'write') {
+      const res = await client.batch(stmts.map(norm).map((st) => ({ sql: st.sql, args: (st.args ?? []) as InArgs })), mode);
+      return res.map((r) => ({ rows: r.rows as Row[] }));
+    },
+    async transaction(fn) {
+      const tx = await client.transaction('write');
+      try {
+        const out = await fn({ execute: exec(tx) });
+        await tx.commit();
+        return out;
+      } catch (e) {
+        await tx.rollback().catch(() => {});
+        throw e;
+      } finally {
+        tx.close();
+      }
+    },
+    async close() { client.close(); },
+  };
+}
+
+/** Minimal Postgres connection surface, satisfied by `pg` (production) and PGlite (tests). */
+export interface PgLike {
+  query(text: string, params: unknown[]): Promise<{ rows: Row[] }>;
+  inTransaction<T>(fn: (q: (text: string, params: unknown[]) => Promise<{ rows: Row[] }>) => Promise<T>): Promise<T>;
+  end(): Promise<void>;
+}
+/** `?` placeholders → `$1, $2…` (EEOS SQL never contains a literal `?`). */
+const toPg = (sql: string) => { let i = 0; return sql.replace(/\?/g, () => '$' + ++i); };
+
+export function postgresDb(conn: PgLike): DB {
+  const exec = (q: PgLike['query']) => async (s: StmtLike) => {
+    const st = norm(s);
+    return { rows: (await q(toPg(st.sql), st.args ?? [])).rows };
+  };
+  const db: DB = {
+    dialect: 'postgres',
+    execute: exec((t, p) => conn.query(t, p)),
+    batch: (stmts) => conn.inTransaction(async (q) => {
+      const out = [];
+      for (const s of stmts) out.push(await exec(q)(s));
+      return out;
+    }),
+    transaction: (fn) => conn.inTransaction((q) => fn({ execute: exec(q) })),
+    close: () => conn.end(),
+  };
+  return db;
+}
+
+function pgPool(url: string): PgLike {
+  const pool = new pg.Pool({ connectionString: url, max: 5, idleTimeoutMillis: 10_000 });
+  return {
+    query: (t, p) => pool.query(t, p as unknown[]),
+    async inTransaction(fn) {
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        const out = await fn((t, p) => c.query(t, p as unknown[]));
+        await c.query('COMMIT');
+        return out;
+      } catch (e) {
+        await c.query('ROLLBACK').catch(() => {});
+        throw e;
+      } finally {
+        c.release();
+      }
+    },
+    end: () => pool.end(),
+  };
+}
 
 const MIGRATIONS: string[] = [
   `
@@ -102,8 +197,8 @@ const MIGRATIONS: string[] = [
     entity_id TEXT NOT NULL,
     entity_name TEXT NOT NULL DEFAULT '',
     details TEXT NOT NULL DEFAULT '',
-    before TEXT,
-    after TEXT,
+    before_json TEXT,
+    after_json TEXT,
     undone_at TEXT,
     undone_by TEXT
   );
@@ -112,55 +207,66 @@ const MIGRATIONS: string[] = [
   `,
 ];
 
+/** Postgres flavour of the schema: same tables and columns, Postgres types. */
+function pgDdl(sqlite: string): string {
+  return sqlite
+    .replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
+    .replace(/ COLLATE NOCASE/g, '')
+    .replace(/ REAL,/g, ' DOUBLE PRECISION,')
+    // Postgres has no rowid; seq keeps insertion order for listings.
+    .replace(/CREATE TABLE (talents|engagements|clients) \(/g, 'CREATE TABLE $1 (\n    seq BIGSERIAL,');
+}
+
+/** Open the database named by `url`: postgres://… (Neon etc.), libsql://… (Turso), or a local file path. */
 export function openDb(url: string, authToken?: string): DB {
+  if (/^postgres(ql)?:\/\//.test(url)) return postgresDb(pgPool(url));
   if (url !== ':memory:' && !/^[a-z]+:/.test(url)) {
     // A bare path: make sure its folder exists and turn it into a file: URL.
     fs.mkdirSync(path.dirname(path.resolve(url)), { recursive: true });
     url = 'file:' + url;
   }
-  return createClient({ url, authToken: authToken || undefined });
+  return sqliteDb(url, authToken);
 }
+
+/** Column that preserves insertion order for listings. */
+export const insertionOrder = (db: DB) => (db.dialect === 'postgres' ? 'seq' : 'rowid');
 
 /** Apply any pending schema migrations. Safe to run on every cold start. */
 export async function migrate(db: DB): Promise<void> {
   await db.execute('CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
+  const ddl = db.dialect === 'postgres' ? MIGRATIONS.map(pgDdl) : MIGRATIONS;
   const done = new Set((await db.execute('SELECT version FROM _migrations')).rows.map((r) => Number(r.version)));
   for (let v = 0; v < MIGRATIONS.length; v++) {
     if (done.has(v + 1)) continue;
-    const stmts = MIGRATIONS[v].split(';').map((x) => x.trim()).filter(Boolean);
-    await db.batch([...stmts, { sql: 'INSERT OR IGNORE INTO _migrations (version, applied_at) VALUES (?, ?)', args: [v + 1, new Date().toISOString()] }], 'write');
+    const stmts = ddl[v].split(';').map((x) => x.trim()).filter(Boolean);
+    await db.batch([...stmts, { sql: 'INSERT INTO _migrations (version, applied_at) VALUES (?, ?) ON CONFLICT DO NOTHING', args: [v + 1, new Date().toISOString()] }], 'write');
   }
 }
 
 /** Run `fn` inside a write transaction. */
-export async function inTransaction<T>(db: DB, fn: (tx: Transaction) => Promise<T>): Promise<T> {
-  const tx = await db.transaction('write');
-  try {
-    const out = await fn(tx);
-    await tx.commit();
-    return out;
-  } catch (e) {
-    await tx.rollback().catch(() => {});
-    throw e;
-  } finally {
-    tx.close();
-  }
+export function inTransaction<T>(db: DB, fn: (tx: Exec) => Promise<T>): Promise<T> {
+  return db.transaction(fn);
 }
 
-export async function one<T = Row>(ex: Exec, sql: string, args: InArgs = []): Promise<T | undefined> {
+export async function one<T = Row>(ex: Exec, sql: string, args: unknown[] = []): Promise<T | undefined> {
   return (await ex.execute({ sql, args })).rows[0] as T | undefined;
 }
-export async function all<T = Row>(ex: Exec, sql: string, args: InArgs = []): Promise<T[]> {
+export async function all<T = Row>(ex: Exec, sql: string, args: unknown[] = []): Promise<T[]> {
   return (await ex.execute({ sql, args })).rows as unknown as T[];
 }
-export async function run(ex: Exec, sql: string, args: InArgs = []): Promise<void> {
+export async function run(ex: Exec, sql: string, args: unknown[] = []): Promise<void> {
   await ex.execute({ sql, args });
+}
+
+/** Portable insert-or-update. */
+function upsert(table: string, keys: string[], cols: string[], args: unknown[]): Stmt {
+  const updates = cols.filter((c) => !keys.includes(c)).map((c) => `${c}=excluded.${c}`).join(', ');
+  return { sql: `INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')}) ON CONFLICT (${keys.join(',')}) DO UPDATE SET ${updates}`, args };
 }
 
 // ---------- row mapping ----------
 const json = <T>(s: string | null): T | null => (s ? (JSON.parse(s) as T) : null);
 
-type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 export const talentFromRow = (r: Row): Talent => ({
   id: r.id, name: r.name, initials: r.initials, title: r.title, department: r.department, status: r.status,
@@ -200,7 +306,7 @@ export async function getEntity(ex: Exec, type: EntityType, id: string): Promise
 }
 
 /** Statement that inserts-or-replaces one entity, or deletes it when `value` is null. */
-export function putStatement(type: EntityType, id: string, value: Entity | null): InStatement {
+export function putStatement(type: EntityType, id: string, value: Entity | null): Stmt {
   if (value === null) {
     if (type === 'capacityRule') {
       const [title, department] = id.split('__');
@@ -212,25 +318,22 @@ export function putStatement(type: EntityType, id: string, value: Entity | null)
   switch (type) {
     case 'talent': {
       const t = value as Talent;
-      return { sql: `INSERT OR REPLACE INTO talents (id,name,initials,title,department,status,util_override,flag,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        args: [t.id, t.name, t.initials, t.title, t.department, t.status, t.utilOverride ? JSON.stringify(t.utilOverride) : null, t.flag ? JSON.stringify(t.flag) : null, t.createdAt, t.updatedAt] };
+      return upsert('talents', ['id'], ['id', 'name', 'initials', 'title', 'department', 'status', 'util_override', 'flag', 'created_at', 'updated_at'], [t.id, t.name, t.initials, t.title, t.department, t.status, t.utilOverride ? JSON.stringify(t.utilOverride) : null, t.flag ? JSON.stringify(t.flag) : null, t.createdAt, t.updatedAt]);
     }
     case 'engagement': {
       const e = value as Engagement;
-      return { sql: `INSERT OR REPLACE INTO engagements (id,name,client,country,sector,scope,sub_scope,stage,lead_id,team_ids,supervisor_id,
-        start_date,end_date,notes,workload_tier,custom_cps,price,cost,status,historical,allocation_overrides,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        args: [e.id, e.name, e.client, e.country, e.sector, e.scope, e.subScope, e.stage, e.leadId, JSON.stringify(e.teamIds), e.supervisorId,
+      return upsert('engagements', ['id'], ['id', 'name', 'client', 'country', 'sector', 'scope', 'sub_scope', 'stage', 'lead_id', 'team_ids', 'supervisor_id',
+        'start_date', 'end_date', 'notes', 'workload_tier', 'custom_cps', 'price', 'cost', 'status', 'historical', 'allocation_overrides', 'created_at', 'updated_at'], [e.id, e.name, e.client, e.country, e.sector, e.scope, e.subScope, e.stage, e.leadId, JSON.stringify(e.teamIds), e.supervisorId,
           e.start, e.end, e.notes, e.workloadTier, e.customCps ? JSON.stringify(e.customCps) : null, e.price, e.cost, e.status,
-          e.historical ? 1 : 0, JSON.stringify(e.allocationOverrides ?? {}), e.createdAt, e.updatedAt] };
+          e.historical ? 1 : 0, JSON.stringify(e.allocationOverrides ?? {}), e.createdAt, e.updatedAt]);
     }
     case 'client': {
       const c = value as Client;
-      return { sql: 'INSERT OR REPLACE INTO clients (id,name,industry,country,owner) VALUES (?,?,?,?,?)', args: [c.id, c.name, c.industry, c.country, c.owner] };
+      return upsert('clients', ['id'], ['id', 'name', 'industry', 'country', 'owner'], [c.id, c.name, c.industry, c.country, c.owner]);
     }
     case 'capacityRule': {
       const r = value as CapacityRule;
-      return { sql: 'INSERT OR REPLACE INTO capacity_rules (title,department,project,leadership,placeholder) VALUES (?,?,?,?,?)', args: [r.title, r.department, r.project, r.leadership, r.placeholder ? 1 : 0] };
+      return upsert('capacity_rules', ['title', 'department'], ['title', 'department', 'project', 'leadership', 'placeholder'], [r.title, r.department, r.project, r.leadership, r.placeholder ? 1 : 0]);
     }
   }
 }
@@ -241,8 +344,8 @@ export async function putEntity(ex: Exec, type: EntityType, id: string, value: E
 export async function getMeta(ex: Exec, key: string): Promise<string | null> {
   return (await one<{ value: string }>(ex, 'SELECT value FROM meta WHERE key=?', [key]))?.value ?? null;
 }
-export function setMetaStatement(key: string, value: string): InStatement {
-  return { sql: 'INSERT OR REPLACE INTO meta (key,value) VALUES (?,?)', args: [key, value] };
+export function setMetaStatement(key: string, value: string): Stmt {
+  return upsert('meta', ['key'], ['key', 'value'], [key, value]);
 }
 export async function setMeta(ex: Exec, key: string, value: string): Promise<void> {
   await ex.execute(setMetaStatement(key, value));
@@ -255,7 +358,7 @@ export async function isEmpty(db: DB): Promise<boolean> {
 /** Replace all business data with a seed file, atomically. Users and sessions are kept. */
 export async function loadSeed(db: DB, seed: SeedFile): Promise<void> {
   const version = Number((await getMeta(db, 'version')) ?? 0) + 1;
-  const stmts: InStatement[] = ['talents', 'engagements', 'clients', 'capacity_rules', 'trajectory', 'audit_log'].map((t) => `DELETE FROM ${t}`);
+  const stmts: StmtLike[] = ['talents', 'engagements', 'clients', 'capacity_rules', 'trajectory', 'audit_log'].map((t) => `DELETE FROM ${t}`);
   seed.talents.forEach((t) => stmts.push(putStatement('talent', t.id, t)));
   seed.engagements.forEach((e) => stmts.push(putStatement('engagement', e.id, e)));
   seed.clients.forEach((c) => stmts.push(putStatement('client', c.id, c)));
