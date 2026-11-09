@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_NOTIFICATION_SETTINGS, buildProjectEmail, emailAsText, mailtoLink, outlookWebLink } from '../shared/notify';
+import { DEFAULT_NOTIFICATION_SETTINGS, buildProjectEmail, emailAsText, mailtoLink, outlookWebLink, parseEmailImport } from '../shared/notify';
 import { createApp } from '../server/app';
 import { createUser } from '../server/auth';
 import { loadSeed, migrate, openDb } from '../server/db';
@@ -64,5 +64,31 @@ describe('one-click mode (no sending account connected)', () => {
     const audit = (await agent.get('/api/audit')).body.entries;
     expect(audit[0]).toMatchObject({ action: 'Opened new-project email to send', entityName: 'Manual' });
     expect(audit.some((a: { action: string }) => a.action === 'New-project email failed')).toBe(false);
+  });
+});
+
+describe('bulk email import', () => {
+  const roster = [
+    { id: 'a', name: 'Ahmed Hisham', email: null },
+    { id: 'b', name: 'Sarah El Saadany', email: 's.elsaadany@tbc.test' },
+    { id: 'c', name: 'Alia El Mistikawi', email: 'old@tbc.test' },
+  ];
+  it('matches names, keeps existing emails and flags problems', () => {
+    const rows = parseEmailImport([
+      'Name\tEmail',
+      'ahmed hisham\tA.Hesham@TBC.test',
+      'Sarah El-Saadany, s.elsaadany@tbc.test',
+      'Alia El Mistikawi; new@tbc.test',
+      'Someone Else, x@tbc.test',
+      'Ahmed Hisham, not-an-email',
+      '',
+    ].join('\n'), roster);
+    expect(rows.map((r) => [r.name, r.email, r.status])).toEqual([
+      ['Ahmed Hisham', 'a.hesham@tbc.test', 'fill'],
+      ['Sarah El Saadany', 's.elsaadany@tbc.test', 'same'],
+      ['Alia El Mistikawi', 'new@tbc.test', 'keep'],
+      ['Someone Else', 'x@tbc.test', 'unmatched'],
+      ['Ahmed Hisham not-an-email', '', 'invalid'],
+    ]);
   });
 });

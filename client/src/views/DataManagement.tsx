@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { DEPARTMENTS, TITLES } from '../../../shared/constants';
-import { isEmail } from '../../../shared/notify';
+import { type EmailImportRow, isEmail, parseEmailImport } from '../../../shared/notify';
 import { stageLabel } from '../../../shared/schedule';
 import type { CapacityRule, Talent } from '../../../shared/types';
 import { EngagementModal, TalentModal } from '../components/modals';
-import { Card, Confirm, Empty, ListRow, PageHead, Stat, Tag, useModal } from '../components/ui';
+import { Card, Confirm, Empty, ListRow, PageHead, Stat, Tag, useModal, useToast } from '../components/ui';
 import { api, downloadFile } from '../lib/api';
 import { useWorkspace } from '../lib/workspace';
 
@@ -106,6 +106,7 @@ function Roster() {
   return (
     <Card>
       <div className="section-desc" style={{ marginTop: 0 }}>Name, title, department and work email for everyone on the roster. Emails are used for new-project notifications. Changes save when you leave the box.</div>
+      {canEdit && <EmailImport />}
       <div className="table-wrap">
         <table className="data">
           <thead><tr><th>Name</th><th>Title</th><th>Department</th><th>Work email</th></tr></thead>
@@ -114,12 +115,69 @@ function Roster() {
               <td><input className="inline-input" defaultValue={t.name} disabled={!canEdit} style={{ width: 200 }} onBlur={(e) => e.target.value.trim() && e.target.value !== t.name && save(t, { name: e.target.value.trim() })} /></td>
               <td><select className="inline-input" value={t.title} disabled={!canEdit} onChange={(e) => save(t, { title: e.target.value })}>{TITLES.map((x) => <option key={x}>{x}</option>)}</select></td>
               <td><select className="inline-input" value={t.department} disabled={!canEdit} onChange={(e) => save(t, { department: e.target.value })}>{DEPARTMENTS.map((x) => <option key={x}>{x}</option>)}</select></td>
-              <td><EmailCell talent={t} disabled={!canEdit} onSave={(email) => save(t, { email })} /></td>
+              <td><EmailCell key={t.email ?? ""} talent={t} disabled={!canEdit} onSave={(email) => save(t, { email })} /></td>
             </tr>
           ))}</tbody>
         </table>
       </div>
     </Card>
+  );
+}
+
+function EmailImport() {
+  const { model: m, refresh } = useWorkspace();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [replace, setReplace] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const rows = parseEmailImport(text, m.data.talents.filter((t) => t.status === 'active'));
+  const toApply = rows.filter((r) => r.status === 'fill' || (replace && r.status === 'keep'));
+  const count = (st: EmailImportRow['status']) => rows.filter((r) => r.status === st).length;
+  const apply = async () => {
+    setBusy(true);
+    let done = 0;
+    const failed: string[] = [];
+    for (const r of toApply) {
+      try { await api.patch(`/talents/${r.talentId}`, { email: r.email }); done++; } catch { failed.push(r.name); }
+    }
+    await refresh();
+    setBusy(false);
+    if (failed.length) toast(`Saved ${done} emails; failed for ${failed.join(', ')}`, 'error');
+    else { toast(`Saved ${done} email${done !== 1 ? 's' : ''}`); setText(''); setOpen(false); }
+  };
+  if (!open) return <button className="btn btn-sm btn-primary" style={{ marginBottom: 12 }} onClick={() => setOpen(true)}>📥 Import emails (paste a list)</button>;
+  const label: Record<EmailImportRow['status'], [string, string]> = {
+    fill: ['tag-ok', 'Will be added'], same: ['tag-neutral', 'Already set'], keep: [replace ? 'tag-warn' : 'tag-neutral', replace ? 'Will replace' : 'Keeps current'],
+    unmatched: ['tag-danger', 'Name not on roster'], invalid: ['tag-danger', 'No valid email'],
+  };
+  return (
+    <div className="box" style={{ marginBottom: 14 }}>
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>📥 Import emails</div>
+      <div className="small muted" style={{ marginBottom: 8 }}>Paste one person per line: the name exactly as on the roster, then the email — e.g. <code>Ahmed Hisham, a.hesham@company.com</code>. Two columns copied from Excel work too. Only <b>empty</b> email boxes are filled unless you tick “replace”.</div>
+      <textarea className="inline-input" style={{ width: '100%', minHeight: 140, fontFamily: 'inherit' }} value={text} onChange={(e) => setText(e.target.value)} placeholder={'Ahmed Hisham, a.hesham@theboardconsulting.com\nHeba Nader, h.nader@theboardconsulting.com'} />
+      {rows.length > 0 && (
+        <>
+          <div className="row small" style={{ margin: '8px 0', gap: 12 }}>
+            <span style={{ color: 'var(--ok)' }}>{count('fill')} to add</span><span>{count('same')} already set</span><span>{count('keep')} different from current</span>
+            {(count('unmatched') + count('invalid')) > 0 && <span style={{ color: 'var(--danger)' }}>{count('unmatched') + count('invalid')} need checking</span>}
+            {count('keep') > 0 && <label style={{ display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} /> replace existing emails too</label>}
+          </div>
+          <div className="table-wrap" style={{ maxHeight: 260, overflowY: 'auto' }}>
+            <table className="data">
+              <thead><tr><th>Name</th><th>Email from your list</th><th>Current email</th><th /></tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={i} style={{ cursor: 'default' }}><td>{r.name || '—'}</td><td>{r.email || '—'}</td><td className="muted">{r.current ?? '—'}</td><td><Tag className={label[r.status][0]}>{label[r.status][1]}</Tag></td></tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <div className="row" style={{ marginTop: 10 }}>
+        <button className="btn btn-primary btn-sm" disabled={!toApply.length || busy} onClick={apply}>{busy ? 'Saving…' : `Save ${toApply.length} email${toApply.length !== 1 ? 's' : ''}`}</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => { setOpen(false); setText(''); }}>Cancel</button>
+      </div>
+    </div>
   );
 }
 

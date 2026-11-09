@@ -113,3 +113,33 @@ export function outlookWebLink(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | '
 export function emailAsText(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'>): string {
   return [`To: ${m.to.join('; ')}`, m.cc.length ? `Cc: ${m.cc.join('; ')}` : '', `Subject: ${m.subject}`, '', m.body].filter((l, i) => l || i > 2).join('\n');
 }
+
+/* Bulk email import: paste "Name, email" lines (or two columns copied from Excel). */
+export interface EmailImportRow {
+  name: string;
+  email: string;
+  talentId: string | null;
+  current: string | null;
+  /** fill = empty today; same = already this email; keep = has a different email (kept unless replacing);
+      unmatched = no one on the roster with that name; invalid = no valid email on the line */
+  status: 'fill' | 'same' | 'keep' | 'unmatched' | 'invalid';
+}
+
+const normName = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z]+/g, ' ').trim().replace(/\s+/g, ' ');
+
+export function parseEmailImport(text: string, roster: { id: string; name: string; email: string | null }[]): EmailImportRow[] {
+  const byName = new Map(roster.map((t) => [normName(t.name), t]));
+  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).flatMap((line): EmailImportRow[] => {
+    const parts = line.split(/\t|,|;/).map((x) => x.trim()).filter(Boolean);
+    const email = parts.find((p) => isEmail(p))?.toLowerCase() ?? '';
+    const name = parts.filter((p) => !isEmail(p)).join(' ');
+    if (!name && !email) return [];
+    // Skip header rows such as "Name | Email" or "Full name, Business e-mail".
+    if (!email && /^((full|employee|business|work)\s*)?(name|e-?\s*mail|email|address)(\s+((full|employee|business|work)\s*)?(name|e-?\s*mail|email|address))*$/i.test(name)) return [];
+    const t = byName.get(normName(name));
+    if (!email) return [{ name, email: '', talentId: t?.id ?? null, current: t?.email ?? null, status: 'invalid' }];
+    if (!t) return [{ name, email, talentId: null, current: null, status: 'unmatched' }];
+    const current = t.email?.toLowerCase() ?? null;
+    return [{ name: t.name, email, talentId: t.id, current, status: !current ? 'fill' : current === email ? 'same' : 'keep' }];
+  });
+}
