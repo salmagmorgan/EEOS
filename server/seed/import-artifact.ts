@@ -109,6 +109,11 @@ export function seedFromArtifact(html: string, opts: { store?: Literal; now?: Da
       capacityRules.push({ title, department, project: ov?.project ?? c.project, leadership: ov?.leadership ?? c.leadership, placeholder: !ov && PLACEHOLDER_TITLES.includes(title) });
     }
 
+  // Project Executive (Operations) shares Field Executive's capacity.
+  const fieldExec = capacityRules.find((r) => r.title === 'Field Executive' && r.department === 'Operations');
+  if (fieldExec && !capacityRules.some((r) => r.title === 'Project Executive' && r.department === 'Operations'))
+    capacityRules.push({ ...fieldExec, title: 'Project Executive' });
+
   // ---- engagements ----
   const mkEngagement = (base: Partial<Engagement> & Pick<Engagement, 'id' | 'name' | 'client' | 'sector' | 'scope' | 'stage' | 'start' | 'end'>, leadName: string, teamNames: string[], supervisorName?: string | null): Engagement => {
     const leadId = idFor(leadName)!;

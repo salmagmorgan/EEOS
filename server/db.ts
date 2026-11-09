@@ -248,6 +248,11 @@ const MIGRATIONS: (string | { sqlite: string; postgres: string })[] = [
   },
   // 3: work email per person, for new-project notifications.
   `ALTER TABLE talents ADD COLUMN email TEXT`,
+  // 4: "Project Executive" (Operations) — same capacity as Field Executive.
+  `INSERT INTO capacity_rules (title, department, project, leadership, placeholder)
+    SELECT 'Project Executive', 'Operations', project, leadership, 0 FROM capacity_rules
+    WHERE title = 'Field Executive' AND department = 'Operations'
+    ON CONFLICT DO NOTHING`,
 ];
 
 /** Postgres flavour of the schema: same tables and columns, Postgres types. */

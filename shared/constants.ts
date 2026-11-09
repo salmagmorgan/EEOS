@@ -18,7 +18,7 @@ export const SUB_SCOPES_STRATEGY = [
 
 export const TITLES = [
   'Business Consulting Director', 'Associate Director', 'Consulting Manager', 'Senior Consultant', 'Consultant',
-  'Senior Business Analyst', 'Business Analyst', 'Project Manager', 'Field Executive', 'Reporting Analyst',
+  'Senior Business Analyst', 'Business Analyst', 'Project Manager', 'Project Executive', 'Field Executive', 'Reporting Analyst',
   'Principal', 'Venture Partner', 'People and Culture Associate Manager',
 ];
 
