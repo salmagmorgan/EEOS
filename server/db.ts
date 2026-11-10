@@ -81,12 +81,36 @@ export function postgresDb(conn: PgLike): DB {
   return db;
 }
 
+/** Network-level failures worth retrying (dropped/refused connections, TLS handshakes cut off,
+    a hosted database waking from sleep) — never SQL errors. */
+export function isTransientDbError(e: unknown): boolean {
+  const err = e as { code?: string; message?: string };
+  if (err?.code && ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN', '57P01', '57P03', '08006', '08001'].includes(err.code)) return true;
+  return /socket disconnected|TLS connection|Connection terminated|connection timeout|timeout exceeded when trying to connect|ECONNRESET|server closed the connection/i.test(err?.message ?? '');
+}
+
+/** Run `fn`, retrying transient connection failures with a short backoff. */
+export async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i >= attempts || !isTransientDbError(e)) throw e;
+      await new Promise((r) => setTimeout(r, 250 * 2 ** (i - 1)));
+    }
+  }
+}
+
 function pgPool(url: string): PgLike {
-  const pool = new pg.Pool({ connectionString: url, max: 5, idleTimeoutMillis: 10_000 });
+  const pool = new pg.Pool({ connectionString: url, max: 5, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 10_000, keepAlive: true });
+  // An idle connection dropped by the server must not crash the process; the pool replaces it.
+  pool.on('error', (e) => console.warn('Postgres idle connection error:', e.message));
   return {
-    query: (t, p) => pool.query(t, p as unknown[]),
+    // A single statement is safe to retry: it either ran or the connection never got it.
+    query: (t, p) => withRetry(() => pool.query(t, p as unknown[])),
     async inTransaction(fn) {
-      const c = await pool.connect();
+      // Retry getting a connection; never retry the transaction body itself.
+      const c = await withRetry(() => pool.connect());
       try {
         await c.query('BEGIN');
         const out = await fn((t, p) => c.query(t, p as unknown[]));

@@ -59,3 +59,26 @@ describe('Microsoft 365 (Graph) mailer', () => {
     expect(createMailer({}).from).toBeNull();
   });
 });
+
+describe('database resilience', () => {
+  it('retries setup after a failure instead of staying broken', async () => {
+    const { readyGate } = await import('../server/app');
+    let calls = 0;
+    const gate = readyGate(async () => { calls++; if (calls === 1) throw new Error('socket disconnected'); });
+    await expect(gate()).rejects.toThrow('socket disconnected');
+    await expect(gate()).resolves.toBeUndefined();
+    await gate();
+    expect(calls).toBe(2); // success is remembered
+  });
+  it('retries only network-level database errors', async () => {
+    const { isTransientDbError, withRetry } = await import('../server/db');
+    expect(isTransientDbError(new Error('Client network socket disconnected before secure TLS connection was established'))).toBe(true);
+    expect(isTransientDbError(Object.assign(new Error('x'), { code: 'ECONNRESET' }))).toBe(true);
+    expect(isTransientDbError(new Error('duplicate key value violates unique constraint'))).toBe(false);
+    let n = 0;
+    await expect(withRetry(async () => { if (++n < 3) throw Object.assign(new Error('x'), { code: 'ETIMEDOUT' }); return 'ok'; })).resolves.toBe('ok');
+    let m = 0;
+    await expect(withRetry(async () => { m++; throw new Error('syntax error'); })).rejects.toThrow('syntax error');
+    expect(m).toBe(1);
+  });
+});
