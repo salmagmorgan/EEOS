@@ -49,7 +49,7 @@ export async function sendProjectEmail(db: DB, mailer: Mailer, engagementId: str
   if (!mailer.from) return { ...base, sent: false, manual: true, skipped: 'No sending account is connected, so the email opens in your own mail app for you to send.' };
   let result: SendResult;
   try {
-    await mailer.send({ to: mail.to.length ? mail.to : mail.cc, cc: mail.to.length ? mail.cc : [], subject: mail.subject, text: mail.body, replyTo: user.email });
+    await mailer.send({ to: mail.to.length ? mail.to : mail.cc, cc: mail.to.length ? mail.cc : [], subject: mail.subject, text: mail.body, replyTo: user.email, from: mail.from });
     result = { ...base, sent: true };
   } catch (e) {
     result = { ...base, sent: false, error: (e as Error).message };

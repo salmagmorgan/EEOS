@@ -9,7 +9,15 @@
         SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, optional EMAIL_FROM */
 import nodemailer from 'nodemailer';
 
-export interface MailMessage { to: string[]; cc?: string[]; subject: string; text: string; replyTo?: string }
+export interface MailMessage {
+  to: string[];
+  cc?: string[];
+  subject: string;
+  text: string;
+  replyTo?: string;
+  /** Send from this mailbox instead of the configured one (Microsoft 365 only — the app needs access to it). */
+  from?: string | null;
+}
 export interface Mailer {
   /** Human-readable description of the sending account, or null when not configured. */
   from: string | null;
@@ -77,7 +85,8 @@ export function graphMailer(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fe
   return {
     from: `${sender} (Microsoft 365)`,
     async send(msg) {
-      const res = await fetchImpl(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`, {
+      const mailbox = msg.from || sender;
+      const res = await fetchImpl(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/sendMail`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -94,7 +103,7 @@ export function graphMailer(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fe
       if (res.status === 202) return;
       const err = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string } };
       const hint = res.status === 403 ? ' — the app needs the Mail.Send application permission with admin consent, and access to this mailbox.'
-        : res.status === 404 ? ` — no mailbox called ${sender} was found (check MS_SENDER).` : '';
+        : res.status === 404 ? ` — no mailbox called ${mailbox} was found (check the "Send from" address / MS_SENDER).` : '';
       throw new Error(`Microsoft 365 rejected the email (${err.error?.code ?? res.status})${hint}`);
     },
   };

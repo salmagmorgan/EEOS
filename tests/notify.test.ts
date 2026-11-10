@@ -67,6 +67,28 @@ describe('one-click mode (no sending account connected)', () => {
   });
 });
 
+describe('sending from the planning mailbox', () => {
+  const fromPlanning = buildProjectEmail(
+    { name: 'P', client: 'C', sector: 'Retail', scope: 'Research', start: '2026-11-10', end: null, leadId: 'l', teamIds: ['l', 'm'], supervisorId: null },
+    (id) => people[id], { ...DEFAULT_NOTIFICATION_SETTINGS, committee: ['Planning@tbc.test', 'pmo@tbc.test'], sendFrom: 'Planning@TBC.test' },
+  );
+  it('sets From and drops the sending mailbox from Cc', () => {
+    expect(fromPlanning.from).toBe('planning@tbc.test');
+    expect(fromPlanning.cc).toEqual(['pmo@tbc.test']);
+  });
+  it('opens Outlook on the web inside that mailbox', () => {
+    const url = new URL(outlookWebLink(fromPlanning));
+    expect(url.pathname).toBe('/mail/planning%40tbc.test/deeplink/compose');
+    expect(url.searchParams.get('to')).toBe('lina@tbc.test,omar@tbc.test');
+    expect(new URL(outlookWebLink({ ...fromPlanning, from: null })).pathname).toBe('/mail/deeplink/compose');
+    expect(emailAsText(fromPlanning).startsWith('From: planning@tbc.test\nTo: lina@tbc.test; omar@tbc.test')).toBe(true);
+  });
+  it('without a Send-from mailbox nothing changes', () => {
+    expect(mail.from).toBeNull();
+    expect(new URL(outlookWebLink(mail)).pathname).toBe('/mail/deeplink/compose');
+  });
+});
+
 describe('bulk email import', () => {
   const roster = [
     { id: 'a', name: 'Ahmed Hisham', email: null },

@@ -21,6 +21,7 @@ export function notificationRoutes(db: DB, mailer: Mailer): Router {
     const body = parse(z.object({
       enabled: z.boolean(),
       committee: z.array(z.string().trim().refine(isEmail, 'contains an invalid email address')).max(50),
+      sendFrom: z.union([z.string().trim().refine(isEmail, 'must be a valid email address'), z.literal('')]).nullable().optional().transform((v) => (v ? v.toLowerCase() : null)),
       subject: z.string().trim().min(1).max(200),
       body: z.string().trim().min(1).max(5000),
     }), req.body);

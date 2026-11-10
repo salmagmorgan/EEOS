@@ -158,6 +158,9 @@ export interface NotificationSettings {
   enabled: boolean;
   /** Planning committee addresses — copied on every new-project email. */
   committee: string[];
+  /** Mailbox the email is sent from (e.g. the planning mailbox). Empty = the sender's own mailbox
+      (one-click) or the server's configured mailbox (automatic). */
+  sendFrom: string | null;
   subject: string;
   body: string;
 }

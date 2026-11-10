@@ -134,6 +134,7 @@ describe.each([
     await viewer.put('/api/settings/notifications').set('X-EEOS', '1').send({}).expect(403);
     const defaults = (await admin.get('/api/settings/notifications').expect(200)).body.defaults;
     await admin.put('/api/settings/notifications').set('X-EEOS', '1').send({ ...defaults, committee: ['Committee@TBC.test', 'pmo@tbc.test'] }).expect(200);
+    await admin.put('/api/settings/notifications').set('X-EEOS', '1').send({ ...defaults, committee: ['Committee@TBC.test', 'pmo@tbc.test'], sendFrom: 'not-an-email' }).expect(400);
 
     outbox.length = 0;
     const res = await admin.post('/api/engagements').set('X-EEOS', '1').send({
@@ -156,6 +157,15 @@ describe.each([
     expect(m.text).toContain(`Supervisor: ${sup.name}`);
     const audit = (await admin.get('/api/audit')).body.entries;
     expect(audit[0].action).toBe('Sent new-project email');
+    expect(m.from).toBeNull();
+
+    // Send from the planning mailbox: From is set and it is no longer copied.
+    await admin.put('/api/settings/notifications').set('X-EEOS', '1').send({ ...defaults, committee: ['Committee@TBC.test', 'pmo@tbc.test'], sendFrom: 'Committee@TBC.test' }).expect(200);
+    outbox.length = 0;
+    await admin.post('/api/engagements').set('X-EEOS', '1').send({ name: 'From Planning', client: 'Mail Client', sector: 'Retail', scope: 'Research', leadId: lead.id }).expect(200);
+    expect(outbox[0].from).toBe('committee@tbc.test');
+    expect(outbox[0].cc).toEqual(['pmo@tbc.test']);
+    await admin.put('/api/settings/notifications').set('X-EEOS', '1').send({ ...defaults, committee: ['Committee@TBC.test', 'pmo@tbc.test'] }).expect(200);
 
     // Opt-out, failures and resending
     outbox.length = 0;

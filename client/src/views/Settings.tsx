@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { TEMPLATE_FIELDS, buildProjectEmail, parseEmailList } from '../../../shared/notify';
+import { TEMPLATE_FIELDS, buildProjectEmail, isEmail, parseEmailList } from '../../../shared/notify';
 import type { NotificationSettings, Role, User } from '../../../shared/types';
 import { Card, PageHead, Tag, fmtDate } from '../components/ui';
 import { api } from '../lib/api';
@@ -84,17 +84,19 @@ function ProjectEmails() {
   const { model, isAdmin, act } = useWorkspace();
   const q = useQuery({ queryKey: ['notify-settings'], queryFn: () => api.get<{ settings: NotificationSettings; defaults: NotificationSettings; sender: string | null }>('/settings/notifications') });
   const qc = useQueryClient();
-  const [draft, setDraft] = useState<(NotificationSettings & { committeeText: string }) | null>(null);
+  const [draft, setDraft] = useState<(NotificationSettings & { committeeText: string; sendFromText: string }) | null>(null);
   if (!q.data) return <Card title="📧 New-project emails"><div className="muted small">Loading…</div></Card>;
-  const s = draft ?? { ...q.data.settings, committeeText: q.data.settings.committee.join(', ') };
+  const s = draft ?? { ...q.data.settings, committeeText: q.data.settings.committee.join(', '), sendFromText: q.data.settings.sendFrom ?? '' };
+  const sendFrom = s.sendFromText.trim().toLowerCase();
+  const sendFromOk = !sendFrom || isEmail(sendFrom);
   const set = (patch: Partial<typeof s>) => setDraft({ ...s, ...patch });
   const committee = parseEmailList(s.committeeText);
   const example = [...model.active].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  const preview = example ? buildProjectEmail(example, (id) => model.talentById.get(id), { ...s, committee: committee.valid }) : null;
+  const preview = example ? buildProjectEmail(example, (id) => model.talentById.get(id), { ...s, committee: committee.valid, sendFrom: sendFromOk ? sendFrom || null : null }) : null;
   const missingEmails = model.talents.filter((t) => !t.email).length;
   const insert = (key: string) => set({ body: s.body + `{{${key}}}` });
   const save = async () => {
-    if (await act(() => api.put('/settings/notifications', { enabled: s.enabled, committee: committee.valid, subject: s.subject, body: s.body }), 'Email settings saved')) {
+    if (await act(() => api.put('/settings/notifications', { enabled: s.enabled, committee: committee.valid, sendFrom: sendFrom || null, subject: s.subject, body: s.body }), 'Email settings saved')) {
       setDraft(null);
       qc.invalidateQueries({ queryKey: ['notify-settings'] });
     }
@@ -121,6 +123,12 @@ function ProjectEmails() {
             {committee.invalid.length > 0 && <span className="error-text">Not valid email addresses: {committee.invalid.join(', ')}</span>}
             {committee.valid.length > 0 && <span className="small muted">{committee.valid.length} address{committee.valid.length > 1 && 'es'}</span>}
           </div>
+          <div className="form-field full">
+            <label>Send from (e.g. the planning mailbox) — leave empty to send from your own mailbox</label>
+            <input type="email" value={s.sendFromText} onChange={(e) => set({ sendFromText: e.target.value })} placeholder="planning@theboardconsulting.com" />
+            {!sendFromOk ? <span className="error-text">Not a valid email address</span>
+              : sendFrom && <span className="small muted">Outlook opens in this mailbox so the email comes from {sendFrom}. Everyone who creates engagements needs “Send as” permission on it (your Microsoft 365 admin sets this).</span>}
+          </div>
           <div className="form-field full"><label>Subject</label><input value={s.subject} onChange={(e) => set({ subject: e.target.value })} /></div>
           <div className="form-field full">
             <label>Message — the {'{{fields}}'} fill in automatically</label>
@@ -136,6 +144,7 @@ function ProjectEmails() {
         <>
           <div className="sub-label">Preview — using “{example.name}”</div>
           <div className="box" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+            {preview.from && <div><b>From:</b> {preview.from}</div>}
             <div><b>To:</b> {preview.to.join(', ') || <span className="muted">nobody yet (no emails on file)</span>}</div>
             <div><b>Cc:</b> {preview.cc.join(', ') || <span className="muted">—</span>}</div>
             {preview.missing.length > 0 && <div style={{ color: 'var(--warn)' }}>No email on file for: {preview.missing.join(', ')}</div>}
@@ -146,7 +155,7 @@ function ProjectEmails() {
       )}
       {isAdmin && (
         <div className="row" style={{ marginTop: 12 }}>
-          <button className="btn btn-primary btn-sm" disabled={!draft || committee.invalid.length > 0} onClick={save}>Save email settings</button>
+          <button className="btn btn-primary btn-sm" disabled={!draft || committee.invalid.length > 0 || !sendFromOk} onClick={save}>Save email settings</button>
           {draft && <button className="btn btn-ghost btn-sm" onClick={() => setDraft(null)}>Discard changes</button>}
           <button className="btn btn-ghost btn-sm" onClick={() => set({ subject: q.data!.defaults.subject, body: q.data!.defaults.body })}>Restore original template</button>
           <span className="spacer" />

@@ -38,6 +38,12 @@ describe('Microsoft 365 (Graph) mailer', () => {
     });
   });
 
+  it('can send from another mailbox, e.g. the planning mailbox', async () => {
+    const { fn, calls } = fakeFetch({});
+    await createMailer(env, fn).send({ to: ['a@tbc.test'], subject: 's', text: 't', from: 'planning@tbc.test' });
+    expect(calls[1].url).toBe('https://graph.microsoft.com/v1.0/users/planning%40tbc.test/sendMail');
+  });
+
   it('explains common setup problems', async () => {
     const badSecret = fakeFetch({ token: () => new Response(JSON.stringify({ error_description: 'AADSTS7000222: The provided client secret keys are expired.\r\nTrace ID: x' }), { status: 401 }) });
     await expect(createMailer(env, badSecret.fn).send({ to: ['a@tbc.test'], subject: 's', text: 't' })).rejects.toThrow(/secrets expire\). AADSTS7000222: The provided client secret keys are expired\.$/);

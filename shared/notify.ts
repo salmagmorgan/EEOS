@@ -5,6 +5,7 @@ import type { Engagement, NotificationSettings, Talent } from './types.js';
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   enabled: true,
   committee: [],
+  sendFrom: null,
   subject: 'New project commissioned: {{project_name}}',
   body: `Hello team,
 
@@ -48,8 +49,10 @@ export interface ProjectEmail {
   body: string;
   /** The engagement's people who have an email address. */
   to: string[];
-  /** The planning committee (minus anyone already in `to`). */
+  /** The planning committee (minus anyone already in `to`, and minus the sending mailbox). */
   cc: string[];
+  /** Mailbox to send from, when one is set (e.g. the planning mailbox). */
+  from: string | null;
   /** People on the engagement with no email on file — they won't receive it. */
   missing: string[];
   fields: Record<string, string>;
@@ -87,8 +90,9 @@ export function buildProjectEmail(
     const addr = talentById(id)?.email?.trim().toLowerCase();
     if (addr && isEmail(addr)) { if (!to.includes(addr)) to.push(addr); } else missing.push(name(id));
   }
-  const cc = settings.committee.map((x) => x.toLowerCase()).filter((x) => !to.includes(x));
-  return { subject: fill(settings.subject, fields), body: fill(settings.body, fields), to, cc, missing, fields };
+  const from = settings.sendFrom?.trim().toLowerCase() || null;
+  const cc = settings.committee.map((x) => x.toLowerCase()).filter((x) => !to.includes(x) && x !== from);
+  return { subject: fill(settings.subject, fields), body: fill(settings.body, fields), to, cc, from, missing, fields };
 }
 
 /* One-click sending from the person's own mail app: links that open a ready-made email. */
@@ -102,16 +106,19 @@ export function mailtoLink(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body
   return `mailto:${to.join(',')}?${q({ cc: cc.join(','), subject: m.subject, body: m.body.replace(/\r?\n/g, '\r\n') })}`;
 }
 
-/** Opens a new message in Outlook on the web (Microsoft 365). */
-export function outlookWebLink(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'>): string {
+/** Opens a new message in Outlook on the web (Microsoft 365). With `from`, the message is composed
+    inside that shared mailbox, so Outlook fills its address in the From field (the person needs
+    permission to send from it). */
+export function outlookWebLink(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'> & { from?: string | null }): string {
   const to = m.to.length ? m.to : m.cc;
   const cc = m.to.length ? m.cc : [];
-  return `https://outlook.office.com/mail/deeplink/compose?${q({ to: to.join(','), cc: cc.join(','), subject: m.subject, body: m.body })}`;
+  const mailbox = m.from ? `${encodeURIComponent(m.from)}/` : '';
+  return `https://outlook.office.com/mail/${mailbox}deeplink/compose?${q({ to: to.join(','), cc: cc.join(','), subject: m.subject, body: m.body })}`;
 }
 
 /** Plain-text version for copying into any mail app. */
-export function emailAsText(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'>): string {
-  return [`To: ${m.to.join('; ')}`, m.cc.length ? `Cc: ${m.cc.join('; ')}` : '', `Subject: ${m.subject}`, '', m.body].filter((l, i) => l || i > 2).join('\n');
+export function emailAsText(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'> & { from?: string | null }): string {
+  return [...(m.from ? [`From: ${m.from}`] : []), `To: ${m.to.join('; ')}`, m.cc.length ? `Cc: ${m.cc.join('; ')}` : '', `Subject: ${m.subject}`, '', m.body].filter((l, i) => l || i > 2).join('\n');
 }
 
 /* Bulk email import: paste "Name, email" lines (or two columns copied from Excel). */
