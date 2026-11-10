@@ -166,7 +166,8 @@ export function Layout() {
   const [spin, setSpin] = useState(false);
   const page = NAV.flatMap((g) => g.items.map((i) => ({ ...i, group: g.group ?? 'Engagement Excellence OS' }))).find((i) => i.to === loc.pathname);
   useEffect(() => { window.scrollTo(0, 0); }, [loc.pathname]);
-  useEffect(() => { document.title = `${page?.title ?? 'EEOS'} · EEOS`; }, [page]);
+  // "EEOS" first, so a phone's home-screen shortcut is named EEOS even if it falls back to the page title.
+  useEffect(() => { document.title = page?.title ? `EEOS · ${page.title}` : 'EEOS'; }, [page]);
   const last = data.updatedAt ? new Date(data.updatedAt) : null;
   return (
     <div className="app">
