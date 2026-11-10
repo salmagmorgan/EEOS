@@ -447,3 +447,24 @@ select.inline-input{padding:6px 9px;}
 .row-3 > *, .row-3b > *, .row-2 > *, .kpi-grid > *{min-width:0;}
 .lifecycle-row{max-width:100%;}
 .main{overflow-x:clip;}
+
+/* ============ Phone layout hardening (iOS Safari) ============
+   Safari gives text inputs a larger minimum width than Chrome, which pushed the top bar — and with
+   it the whole page — wider than the screen. Everything below lets content shrink to the screen. */
+html, body { max-width: 100%; overflow-x: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+.search-box input { min-width: 0; }
+.topbar-title { min-width: 0; }
+.topbar-right > * { min-width: 0; }
+.card, .kpi-card { min-width: 0; max-width: 100%; }
+.view-watermark { overflow: hidden; }
+@media (max-width: 860px) {
+  .topbar { justify-content: flex-start; }
+  .topbar-title { flex: 1 1 0; }
+  .topbar-title h1, .topbar-title p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar-right { width: 100%; min-width: 0; }
+  .search-box { width: auto; flex: 1 1 100%; min-width: 0; order: 10; }
+  .pill-btn { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .kpi-grid, .stat-strip, .row-2, .row-3, .row-3b, .qa-grid, .form-grid, [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+  .content, .view { min-width: 0; max-width: 100%; }
+  .modal-box { max-width: calc(100vw - 16px) !important; }
+}
