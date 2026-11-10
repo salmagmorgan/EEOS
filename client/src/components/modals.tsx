@@ -2,7 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import { DEPARTMENTS, LIFECYCLE, SCOPES, SCOPE_STAGES, TITLES, WORKLOAD_TIERS, WORKLOAD_TIER_NAMES } from '../../../shared/constants';
 import { fmtMoney, type Model } from '../../../shared/engine';
-import { emailAsText, isEmail, mailtoLink, outlookWebLink, type ProjectEmail } from '../../../shared/notify';
+import { emailAsText, isEmail, mailtoLink, outlookAppLink, outlookWebLink, type ProjectEmail } from '../../../shared/notify';
+
+const IS_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { parseCpsCsv, scopeStages, stageLabel } from '../../../shared/schedule';
 import type { Engagement } from '../../../shared/types';
 import { api } from '../lib/api';
@@ -298,16 +300,27 @@ export function EmailTeamModal({ id, justCreated }: { id: string; justCreated?: 
               ) : (
                 <>
                   <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>Open this email in Outlook, then press <u>Send</u>:</div>
-                  <div className="row">
-                    <a className="btn btn-primary" href={outlookWebLink(p)} target="_blank" rel="noopener noreferrer" onClick={() => logOpened('outlook-web')}>📨 {p.from ? `Open in Outlook as ${p.from}` : 'Open in Outlook (web)'}</a>
-                    <a className="btn" href={mailtoLink(p)} onClick={() => logOpened('mail-app')}>🖥 Open in Outlook app</a>
+                  <div className="email-actions">
+                    {IS_PHONE ? (
+                      <>
+                        <a className="btn btn-primary" href={outlookAppLink(p)} onClick={() => logOpened('mail-app')}>📱 Open in Outlook app</a>
+                        <a className="btn" href={outlookWebLink(p)} target="_blank" rel="noopener noreferrer" onClick={() => logOpened('outlook-web')}>🌐 Open in Outlook on the web</a>
+                      </>
+                    ) : (
+                      <>
+                        <a className="btn btn-primary" href={outlookWebLink(p)} target="_blank" rel="noopener noreferrer" onClick={() => logOpened('outlook-web')}>🌐 Open in Outlook on the web</a>
+                        <a className="btn" href={mailtoLink(p)} onClick={() => logOpened('mail-app')}>🖥 Open in Outlook app</a>
+                      </>
+                    )}
                     <button className="btn btn-ghost" onClick={copy}>📋 Copy email</button>
                   </div>
                   {p.from && (
                     <div className="small" style={{ marginTop: 8, lineHeight: 1.6, color: 'var(--text-dim)' }}>
-                      Check that <b>From</b> shows <b>{p.from}</b> before sending. If it shows your own address, click <b>From</b> and pick {p.from}{' '}
-                      (in the Outlook app always do this). If Outlook says you don't have access, ask your Microsoft 365 admin for “Send as” permission on that mailbox
-                      — or <a href={outlookWebLink({ ...p, from: null })} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }} onClick={() => logOpened('outlook-web')}>open it in your own mailbox</a> instead.
+                      Send it from <b style={{ overflowWrap: 'anywhere' }}>{p.from}</b>:
+                      <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                        <li><b>Outlook app</b> — it writes from your <b>default account</b>. Set it once: Outlook → <b>Settings</b> → <b>Default account</b> (under Mail) → choose {p.from}. Or tap <b>From</b> in the new email and switch.</li>
+                        <li><b>Outlook on the web</b> — opens in the {p.from} mailbox; check <b>From</b> before sending (needs “Send as” permission on it).</li>
+                      </ul>
                     </div>
                   )}
                   {opened && <div className="small" style={{ color: 'var(--ok)', marginTop: 8 }}>✅ Opened — remember to press <b>Send</b> in Outlook. You can close this window.</div>}

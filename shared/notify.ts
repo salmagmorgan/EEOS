@@ -58,8 +58,30 @@ export interface ProjectEmail {
   fields: Record<string, string>;
 }
 
+/** Field names people naturally type, mapped to the template fields. Matching ignores case, spaces,
+    hyphens and underscores, so {{Project Name}}, {{project-name}} and {{project_name}} all work. */
+const FIELD_ALIASES: Record<string, string> = {
+  project: 'project_name', projectname: 'project_name', engagement: 'project_name', engagementname: 'project_name', name: 'project_name',
+  client: 'client_name', clientname: 'client_name',
+  leader: 'engagement_leader', lead: 'engagement_leader', engagementleader: 'engagement_leader', engagementlead: 'engagement_leader',
+  members: 'engagement_members', team: 'engagement_members', engagementmembers: 'engagement_members', teammembers: 'engagement_members',
+  operations: 'operations_members', ops: 'operations_members', operationsmember: 'operations_members', operationsmembers: 'operations_members', operationsteam: 'operations_members',
+  supervisor: 'supervisor', sector: 'sector', scope: 'scope',
+  start: 'start_date', startdate: 'start_date', end: 'end_date', enddate: 'end_date', plannedend: 'end_date', plannedenddate: 'end_date',
+};
+export const fieldKey = (raw: string): string | null => {
+  const k = raw.toLowerCase().replace(/[^a-z]/g, '');
+  return FIELD_ALIASES[k] ?? null;
+};
+const PLACEHOLDER = /\{\{\s*([^{}]{1,40}?)\s*\}\}/g;
+
 const fill = (template: string, fields: Record<string, string>) =>
-  template.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k: string) => (k in fields ? fields[k] : m));
+  template.replace(PLACEHOLDER, (m, raw: string) => { const k = fieldKey(raw); return k && k in fields ? fields[k] : m; });
+
+/** Placeholders in a template that don't match any field (shown as a warning in Settings). */
+export function unknownPlaceholders(template: string): string[] {
+  return [...template.matchAll(PLACEHOLDER)].map((x) => x[0]).filter((m) => !fieldKey(m.slice(2, -2)));
+}
 
 export function buildProjectEmail(
   e: Pick<Engagement, 'name' | 'client' | 'sector' | 'scope' | 'start' | 'end' | 'leadId' | 'teamIds' | 'supervisorId'>,
@@ -104,6 +126,14 @@ export function mailtoLink(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body
   const to = m.to.length ? m.to : m.cc;
   const cc = m.to.length ? m.cc : [];
   return `mailto:${to.join(',')}?${q({ cc: cc.join(','), subject: m.subject, body: m.body.replace(/\r?\n/g, '\r\n') })}`;
+}
+
+/** Opens a new message in the Outlook app on iPhone / iPad / Android (community-documented
+    ms-outlook:// scheme). The app composes from its default account. */
+export function outlookAppLink(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'>): string {
+  const to = m.to.length ? m.to : m.cc;
+  const cc = m.to.length ? m.cc : [];
+  return `ms-outlook://compose?${q({ to: to.join(','), cc: cc.join(','), subject: m.subject, body: m.body })}`;
 }
 
 /** Opens a new message in Outlook on the web (Microsoft 365). With `from`, the message is composed

@@ -468,3 +468,8 @@ html, body { max-width: 100%; overflow-x: hidden; -webkit-text-size-adjust: 100%
   .content, .view { min-width: 0; max-width: 100%; }
   .modal-box { max-width: calc(100vw - 16px) !important; }
 }
+
+/* Email pop-up buttons: stack and wrap on phones instead of running off the edge */
+.email-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.email-actions .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; justify-content: center; text-align: center; }
+@media (max-width: 860px) { .email-actions .btn { flex: 1 1 100%; } }

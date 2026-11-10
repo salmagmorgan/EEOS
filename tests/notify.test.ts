@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_NOTIFICATION_SETTINGS, buildProjectEmail, emailAsText, mailtoLink, outlookWebLink, parseEmailImport } from '../shared/notify';
+import { DEFAULT_NOTIFICATION_SETTINGS, TEMPLATE_FIELDS, buildProjectEmail, emailAsText, fieldKey, mailtoLink, outlookAppLink, outlookWebLink, parseEmailImport, unknownPlaceholders } from '../shared/notify';
 import { createApp } from '../server/app';
 import { createUser } from '../server/auth';
 import { loadSeed, migrate, openDb } from '../server/db';
@@ -86,6 +86,26 @@ describe('sending from the planning mailbox', () => {
   it('without a Send-from mailbox nothing changes', () => {
     expect(mail.from).toBeNull();
     expect(new URL(outlookWebLink(mail)).pathname).toBe('/mail/deeplink/compose');
+  });
+});
+
+describe('template fields are forgiving', () => {
+  const e = { name: 'Brand & Growth', client: 'Atlas', sector: 'Retail', scope: 'Strategy', start: '2026-11-10', end: null, leadId: 'l', teamIds: ['l', 'm', 'o'], supervisorId: 's' };
+  it('fills {{Project Name}}, {{project name}}, {{project-name}} and {{ PROJECT_NAME }}', () => {
+    const out = buildProjectEmail(e, (id) => people[id], { ...DEFAULT_NOTIFICATION_SETTINGS, subject: 'A {{Project Name}} B {{project name}} C {{project-name}} D {{ PROJECT_NAME }} E {{client}} F {{Engagement Leader}}' });
+    expect(out.subject).toBe('A Brand & Growth B Brand & Growth C Brand & Growth D Brand & Growth E Atlas F Lina Lead');
+  });
+  it('every documented field resolves, and unknown ones are reported', () => {
+    TEMPLATE_FIELDS.forEach((f) => expect(fieldKey(f.key)).toBe(f.key));
+    expect(unknownPlaceholders('Hi {{project name}} {{budget}} {{Client}}')).toEqual(['{{budget}}']);
+    expect(unknownPlaceholders(DEFAULT_NOTIFICATION_SETTINGS.subject + DEFAULT_NOTIFICATION_SETTINGS.body)).toEqual([]);
+  });
+  it('builds an Outlook app link', () => {
+    const url = new URL(outlookAppLink(mail));
+    expect(url.protocol).toBe('ms-outlook:');
+    expect(url.searchParams.get('to')).toBe('lina@tbc.test,omar@tbc.test,sam@tbc.test');
+    expect(url.searchParams.get('subject')).toBe('New project commissioned: Brand & Growth');
+    expect(url.searchParams.get('body')).toBe(mail.body);
   });
 });
 

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { TEMPLATE_FIELDS, buildProjectEmail, isEmail, parseEmailList } from '../../../shared/notify';
+import { TEMPLATE_FIELDS, buildProjectEmail, isEmail, parseEmailList, unknownPlaceholders } from '../../../shared/notify';
 import type { NotificationSettings, Role, User } from '../../../shared/types';
 import { Card, PageHead, Tag, fmtDate } from '../components/ui';
 import { api } from '../lib/api';
@@ -130,6 +130,9 @@ function ProjectEmails() {
               : sendFrom && <span className="small muted">Outlook opens in this mailbox so the email comes from {sendFrom}. Everyone who creates engagements needs “Send as” permission on it (your Microsoft 365 admin sets this).</span>}
           </div>
           <div className="form-field full"><label>Subject</label><input value={s.subject} onChange={(e) => set({ subject: e.target.value })} /></div>
+          {unknownPlaceholders(s.subject + ' ' + s.body).length > 0 && (
+            <div className="form-field full error-text">These don't match a field and won't fill in: {unknownPlaceholders(s.subject + ' ' + s.body).join(', ')}. Use the Insert buttons below.</div>
+          )}
           <div className="form-field full">
             <label>Message — the {'{{fields}}'} fill in automatically</label>
             <textarea value={s.body} onChange={(e) => set({ body: e.target.value })} style={{ minHeight: 220, fontFamily: 'inherit', lineHeight: 1.5 }} />
