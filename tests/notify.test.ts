@@ -134,3 +134,14 @@ describe('bulk email import', () => {
     ]);
   });
 });
+
+describe('emlFile', () => {
+  it('builds an unsent Outlook draft with From, recipients and a UTF-8 body', async () => {
+    const { emlFile } = await import('../shared/notify');
+    const eml = emlFile({ from: 'planning@x.com', to: ['a@x.com'], cc: ['c@x.com'], subject: 'New project: Café', body: 'Hello team,\nLine 2' });
+    expect(eml.startsWith('X-Unsent: 1\r\nFrom: planning@x.com\r\nTo: a@x.com\r\nCc: c@x.com\r\n')).toBe(true);
+    expect(eml).toContain('Subject: =?UTF-8?B?');
+    const body = eml.split('\r\n\r\n')[1].replace(/\r\n/g, '');
+    expect(Buffer.from(body, 'base64').toString('utf8')).toBe('Hello team,\r\nLine 2');
+  });
+});

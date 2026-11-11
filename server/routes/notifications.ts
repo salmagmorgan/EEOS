@@ -51,10 +51,10 @@ export function notificationRoutes(db: DB, mailer: Mailer): Router {
 
   /** Record that someone opened the ready-made email in their own mail app (one-click mode). */
   r.post('/engagements/:id/notify/opened', requireRole('editor'), route(async (req) => {
-    const { app } = parse(z.object({ app: z.enum(['outlook-web', 'mail-app', 'copied']) }), req.body);
+    const { app } = parse(z.object({ app: z.enum(['outlook-web', 'mail-app', 'draft', 'copied']) }), req.body);
     const mail = await composeProjectEmail(db, req.params.id);
     const user = me(req);
-    const how = { 'outlook-web': 'Outlook on the web', 'mail-app': 'their mail app', copied: 'copied to clipboard' }[app];
+    const how = { 'outlook-web': 'Outlook on the web', 'mail-app': 'their mail app', draft: 'an Outlook draft file', copied: 'copied to clipboard' }[app];
     await run(db, 'INSERT INTO audit_log (at,user_id,user_name,action,entity_type,entity_id,entity_name,details) VALUES (?,?,?,?,?,?,?,?)', [
       new Date().toISOString(), user.id, user.name, 'Opened new-project email to send', 'email', req.params.id, mail.fields.project_name,
       `${how} · ${mail.to.length + mail.cc.length} recipient(s)`,

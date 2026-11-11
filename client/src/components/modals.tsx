@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import { DEPARTMENTS, LIFECYCLE, SCOPES, SCOPE_STAGES, TITLES, WORKLOAD_TIERS, WORKLOAD_TIER_NAMES } from '../../../shared/constants';
 import { fmtMoney, type Model } from '../../../shared/engine';
-import { emailAsText, isEmail, mailtoLink, outlookAppLink, outlookWebLink, type ProjectEmail } from '../../../shared/notify';
+import { emailAsText, emlFile, isEmail, mailtoLink, outlookAppLink, outlookWebLink, type ProjectEmail } from '../../../shared/notify';
 
 const IS_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { parseCpsCsv, scopeStages, stageLabel } from '../../../shared/schedule';
@@ -265,7 +265,7 @@ export function EmailTeamModal({ id, justCreated }: { id: string; justCreated?: 
   const p = q.data?.email;
   const auto = !!q.data?.sender;
   const nobody = !!p && !p.to.length && !p.cc.length;
-  const logOpened = (app: 'outlook-web' | 'mail-app' | 'copied') => { setOpened(true); api.post(`/engagements/${id}/notify/opened`, { app }).catch(() => {}); };
+  const logOpened = (app: 'outlook-web' | 'mail-app' | 'draft' | 'copied') => { setOpened(true); api.post(`/engagements/${id}/notify/opened`, { app }).catch(() => {}); };
   const sendDirect = async () => {
     setBusy(true);
     type SendResult = { sent: boolean; error?: string; skipped?: string; to: string[]; cc: string[] };
@@ -276,6 +276,16 @@ export function EmailTeamModal({ id, justCreated }: { id: string; justCreated?: 
     if (!r) return;
     if (r.sent) { toast(`Email sent to ${r.to.length + r.cc.length} people`); modal.close(); }
     else toast('Not sent: ' + (r.error ?? r.skipped), 'error');
+  };
+  const downloadDraft = () => {
+    if (!p) return;
+    const url = URL.createObjectURL(new Blob([emlFile(p)], { type: 'message/rfc822' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(p.fields.project_name || 'New project').replace(/[\\/:*?"<>|]+/g, ' ').trim()} - email.eml`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    logOpened('draft');
   };
   const copy = async () => {
     if (!p) return;
@@ -308,8 +318,9 @@ export function EmailTeamModal({ id, justCreated }: { id: string; justCreated?: 
                       </>
                     ) : (
                       <>
-                        <a className="btn btn-primary" href={outlookWebLink(p)} target="_blank" rel="noopener noreferrer" onClick={() => logOpened('outlook-web')}>🌐 Open in Outlook on the web</a>
-                        <a className="btn" href={mailtoLink(p)} onClick={() => logOpened('mail-app')}>🖥 Open in Outlook app</a>
+                        <a className="btn btn-primary" href={mailtoLink(p)} onClick={() => logOpened('mail-app')}>🖥 Open in my Outlook</a>
+                        <button className="btn" onClick={downloadDraft} title="Downloads the email as a file; open it and Outlook shows it as a new message ready to send">📄 Outlook draft file</button>
+                        <a className="btn" href={outlookWebLink(p)} target="_blank" rel="noopener noreferrer" onClick={() => logOpened('outlook-web')}>🌐 Outlook on the web</a>
                       </>
                     )}
                     <button className="btn btn-ghost" onClick={copy}>📋 Copy email</button>
@@ -318,6 +329,7 @@ export function EmailTeamModal({ id, justCreated }: { id: string; justCreated?: 
                     <div className="small" style={{ marginTop: 8, lineHeight: 1.6, color: 'var(--text-dim)' }}>
                       Send it from <b style={{ overflowWrap: 'anywhere' }}>{p.from}</b>:
                       <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                        {!IS_PHONE && <li><b>Opened the new Outlook instead of your usual one?</b> On Windows: <b>Settings → Apps → Default apps</b> → search <b>mailto</b> → choose <b>Outlook (classic)</b>. Or, in new Outlook, turn off the <b>New Outlook</b> switch at the top right. <b>📄 Outlook draft file</b> also opens in your usual Outlook with From already set.</li>}
                         <li><b>Outlook app</b> — it writes from your <b>default account</b>. Set it once: Outlook → <b>Settings</b> → <b>Default account</b> (under Mail) → choose {p.from}. Or tap <b>From</b> in the new email and switch.</li>
                         <li><b>Outlook on the web</b> — opens in the {p.from} mailbox; check <b>From</b> before sending (needs “Send as” permission on it).</li>
                       </ul>

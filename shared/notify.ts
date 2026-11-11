@@ -180,3 +180,30 @@ export function parseEmailImport(text: string, roster: { id: string; name: strin
     return [{ name: t.name, email, talentId: t.id, current, status: !current ? 'fill' : current === email ? 'same' : 'keep' }];
   });
 }
+
+/** A ready-to-send draft as an .eml file. `X-Unsent: 1` makes classic Outlook for Windows open it
+    as a new, editable message (with From set when that account is in Outlook), not as received mail. */
+export function emlFile(m: Pick<ProjectEmail, 'to' | 'cc' | 'subject' | 'body'> & { from?: string | null }): string {
+  const to = m.to.length ? m.to : m.cc;
+  const cc = m.to.length ? m.cc : [];
+  const b64 = (s: string) => {
+    const bytes = new TextEncoder().encode(s);
+    let bin = '';
+    bytes.forEach((b) => { bin += String.fromCharCode(b); });
+    return btoa(bin);
+  };
+  const header = (s: string) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${b64(s)}?=`);
+  const body = b64(m.body.replace(/\r?\n/g, '\r\n')).replace(/.{1,76}/g, '$&\r\n');
+  return [
+    'X-Unsent: 1',
+    ...(m.from ? [`From: ${m.from}`] : []),
+    `To: ${to.join(', ')}`,
+    ...(cc.length ? [`Cc: ${cc.join(', ')}`] : []),
+    `Subject: ${header(m.subject)}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset="utf-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    body,
+  ].join('\r\n');
+}
