@@ -261,12 +261,24 @@ export function entityRoutes(db: DB, mailer: Mailer): Router {
   r.patch('/talents/:id', editor, route(async (req) => {
     const body = parse(talentInput.partial(), req.body);
     if (!('email' in (req.body ?? {}))) delete (body as { email?: unknown }).email;
-    return {
-      talent: await talentMutation(me(req), req.params.id, 'Edited talent record', (t) => {
-        Object.assign(t, Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)));
-        t.initials = initialsOf(t.name);
-      }, (t) => `${t.title} · ${t.department}`),
-    };
+    const user = me(req);
+    const before = await talent(req.params.id);
+    if (!before) throw new HttpError(404, 'Talent not found.');
+    const renamed = body.name !== undefined && body.name !== before.name;
+    if (renamed && (await one(db, "SELECT id FROM talents WHERE lower(name)=lower(?) AND id<>? AND status<>'alumni'", [body.name, before.id]))) {
+      throw new HttpError(409, `Someone called ${body.name} is already on the roster.`);
+    }
+    const updated = await talentMutation(user, req.params.id, renamed ? 'Renamed talent' : 'Edited talent record', (t) => {
+      Object.assign(t, Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)));
+      t.initials = initialsOf(t.name);
+    }, (t) => (renamed ? `${before.name} → ${t.name}` : `${t.title} · ${t.department}`));
+    // Client owners are stored by name: carry the new name over.
+    if (renamed) {
+      for (const c of await all<{ id: string }>(db, 'SELECT id FROM clients WHERE owner=?', [before.name])) {
+        await mutate<Client>(db, user, { type: 'client', id: c.id, action: 'Edited client', apply: (x) => ({ ...x!, owner: body.name! }), details: (_b, a) => `Owner: ${a!.owner} (renamed)` });
+      }
+    }
+    return { talent: updated };
   }));
 
   r.post('/talents/:id/:action(remove|restore)', editor, route(async (req) => {

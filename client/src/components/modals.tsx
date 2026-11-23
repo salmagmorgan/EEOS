@@ -427,6 +427,38 @@ function WeightInput({ value, overridden, onSave, onClear }: { value: number; ov
 }
 
 // ---------------- talent ----------------
+/** Edit a person's name, work email, title and department. */
+export function EditTalentModal({ id }: { id: string }) {
+  const { model, act } = useWorkspace();
+  const modal = useModal();
+  const t = model.talentById.get(id);
+  const [f, setF] = useState({ name: t?.name ?? '', email: t?.email ?? '', title: t?.title ?? '', department: t?.department ?? '' });
+  if (!t) return <ModalFrame title="Edit talent">Not found.</ModalFrame>;
+  const name = f.name.trim().replace(/\s+/g, ' ');
+  const duplicate = name.toLowerCase() !== t.name.toLowerCase() && model.talents.some((x) => x.id !== id && x.name.toLowerCase() === name.toLowerCase());
+  const badEmail = !!f.email.trim() && !isEmail(f.email);
+  const changed = name !== t.name || f.email.trim().toLowerCase() !== (t.email ?? '') || f.title !== t.title || f.department !== t.department;
+  const back = () => modal.open(<TalentModal id={id} />);
+  return (
+    <ModalFrame title={`Edit ${t.name}`} footer={<>
+      <button className="btn btn-primary btn-sm" disabled={name.length < 2 || duplicate || badEmail || !changed}
+        onClick={async () => { if (await act(() => api.patch(`/talents/${id}`, { name, email: f.email.trim(), title: f.title, department: f.department }), name !== t.name ? `Renamed to ${name}` : 'Details saved')) back(); }}>Save changes</button>
+    </>}>
+      <div className="form-grid">
+        <div className="form-field full"><label>Full name</label><input autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+          {duplicate && <div className="small" style={{ color: 'var(--danger)', marginTop: 4 }}>Someone with this name is already on the roster.</div>}
+          {name !== t.name && !duplicate && name.length >= 2 && <div className="small muted" style={{ marginTop: 4 }}>The new name shows everywhere: engagements, reports, history and emails.</div>}
+        </div>
+        <div className="form-field full"><label>Work email (for project notifications)</label><input type="email" placeholder="name@company.com" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+          {badEmail && <div className="small" style={{ color: 'var(--danger)', marginTop: 4 }}>That doesn’t look like an email address.</div>}
+        </div>
+        <div className="form-field"><label>Title</label><select value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })}>{TITLES.map((x) => <option key={x}>{x}</option>)}</select></div>
+        <div className="form-field"><label>Department</label><select value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })}>{DEPARTMENTS.map((x) => <option key={x}>{x}</option>)}</select></div>
+      </div>
+    </ModalFrame>
+  );
+}
+
 export function TalentModal({ id }: { id: string }) {
   const { model, canEdit, act } = useWorkspace();
   const modal = useModal();
@@ -442,6 +474,7 @@ export function TalentModal({ id }: { id: string }) {
   return (
     <ModalFrame title={t.name} footer={canEdit && (
       <>
+        <button className="btn btn-sm" onClick={() => modal.open(<EditTalentModal id={t.id} />)}>✏️ Edit details</button>
         <button className="btn btn-sm" onClick={() => act(() => api.put(`/talents/${t.id}/flag`, { flagged: !t.flag }), t.flag ? 'Flag removed' : 'Flagged for reallocation')}>{t.flag ? 'Unflag' : '🚩 Flag for reallocation'}</button>
         <button className="btn btn-danger-outline btn-sm" onClick={() => modal.open(<Confirm title="Remove talent?" danger confirmLabel="🗑 Remove"
           message={<>Remove <b>{t.name}</b> from the roster? {t.engagementCount > 0 && <span style={{ color: 'var(--warn)' }}>They are on {t.engagementCount} active engagement(s) — reassign that work first. </span>}History is kept and they can be restored from Data Management.</>}

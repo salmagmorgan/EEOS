@@ -112,7 +112,7 @@ function Roster() {
           <thead><tr><th>Name</th><th>Title</th><th>Department</th><th>Work email</th></tr></thead>
           <tbody>{rows.map((t) => (
             <tr key={t.id} style={{ cursor: 'default' }}>
-              <td><input className="inline-input" defaultValue={t.name} disabled={!canEdit} style={{ width: 200 }} onBlur={(e) => e.target.value.trim() && e.target.value !== t.name && save(t, { name: e.target.value.trim() })} /></td>
+              <td><input className="inline-input" title="Click to change the name, then click away to save" defaultValue={t.name} disabled={!canEdit} style={{ width: 200 }} onBlur={(e) => e.target.value.trim() && e.target.value !== t.name && save(t, { name: e.target.value.trim() })} /></td>
               <td><select className="inline-input" value={t.title} disabled={!canEdit} onChange={(e) => save(t, { title: e.target.value })}>{TITLES.map((x) => <option key={x}>{x}</option>)}</select></td>
               <td><select className="inline-input" value={t.department} disabled={!canEdit} onChange={(e) => save(t, { department: e.target.value })}>{DEPARTMENTS.map((x) => <option key={x}>{x}</option>)}</select></td>
               <td><EmailCell key={t.email ?? ""} talent={t} disabled={!canEdit} onSave={(email) => save(t, { email })} /></td>

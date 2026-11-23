@@ -182,6 +182,20 @@ describe.each([
     await viewer.post(`/api/engagements/${failed.body.engagement.id}/notify`).set('X-EEOS', '1').expect(403);
   });
 
+  it('renames a talent everywhere, carrying client owners over and refusing duplicates', async () => {
+    const w = (await admin.get('/api/workspace').expect(200)).body;
+    const owned = w.clients.find((c: { owner: string }) => w.talents.some((t: { name: string; status: string }) => t.name === c.owner && t.status === 'active'));
+    const t = owned ? w.talents.find((x: { name: string }) => x.name === owned.owner) : w.talents.find((x: { status: string }) => x.status === 'active');
+    const other = w.talents.find((x: { id: string; status: string }) => x.id !== t.id && x.status === 'active');
+    await admin.patch('/api/talents/' + t.id).set('X-EEOS', '1').send({ name: other.name.toUpperCase() }).expect(409);
+    const res = await admin.patch('/api/talents/' + t.id).set('X-EEOS', '1').send({ name: 'Renamed Person' }).expect(200);
+    expect(res.body.talent).toMatchObject({ name: 'Renamed Person', initials: 'RP', email: t.email ?? null, title: t.title });
+    const after = (await admin.get('/api/workspace').expect(200)).body;
+    if (owned) expect(after.clients.find((c: { id: string }) => c.id === owned.id).owner).toBe('Renamed Person');
+    const audit = (await admin.get('/api/audit').expect(200)).body;
+    expect(JSON.stringify(audit)).toContain(`${t.name} → Renamed Person`);
+  });
+
   it('validates input', async () => {
     const res = await admin.post('/api/engagements').set('X-EEOS', '1').send({ name: '', client: 'C', sector: 'S', scope: 'Research', leadId: 'nobody' });
     expect(res.status).toBe(400);
