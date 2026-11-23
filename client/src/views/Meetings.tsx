@@ -3,9 +3,10 @@
    notes from earlier sessions. The meeting questions are shown once, at the top, as a reference. */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { progressFor, stageLabel, toCsv } from '../../../shared/schedule';
+import { progressFor, scopeStages, stageLabel, toCsv } from '../../../shared/schedule';
 import type { Engagement, MeetingNote, MeetingRag, Milestone, MilestoneStatus } from '../../../shared/types';
 import type { Model } from '../../../shared/engine';
+import { Donut } from '../components/charts';
 import { Avatar, Card, Confirm, Empty, ModalFrame, PageHead, fmtDate, useModal, useToast } from '../components/ui';
 import { api } from '../lib/api';
 import { useWorkspace } from '../lib/workspace';
@@ -30,7 +31,6 @@ export const MEETING_QUESTIONS = [
 ];
 const today = () => new Date().toISOString().slice(0, 10);
 const daysSince = (d: string) => Math.floor((Date.parse(today()) - Date.parse(d)) / 86_400_000);
-const ago = (d: string) => { const n = daysSince(d); return n < 0 ? 'upcoming' : n === 0 ? 'today' : n === 1 ? 'yesterday' : `${n} days ago`; };
 const STALE_DAYS = 14;
 const staffOf = (e: Engagement) => [...new Set([e.leadId, ...(e.supervisorId ? [e.supervisorId] : []), ...e.teamIds])];
 
@@ -72,6 +72,73 @@ function noteText(n: MeetingNote): { label?: string; text: string }[] {
   return parts;
 }
 
+// ---------- visuals ----------
+/** The engagement's lifecycle as a segmented bar: done, current, still to come. */
+function JourneyBar({ e }: { e: Engagement }) {
+  const stages = scopeStages(e.scope);
+  const at = Math.max(0, stages.findIndex((x) => x.id === e.stage));
+  return (
+    <div className="mtg-journey" aria-label={`Stage ${at + 1} of ${stages.length}: ${stageLabel(e.stage)}`}>
+      <div className="mtg-journey-bar">
+        {stages.map((x, i) => (
+          <div key={x.id} className={'mtg-journey-seg' + (i < at ? ' done' : i === at ? ' now' : '')} title={`${i + 1}. ${x.label}`} style={{ flex: x.weight }}>
+            {i === at && <span className="mtg-journey-pin">{x.icon}</span>}
+          </div>
+        ))}
+      </div>
+      <div className="mtg-journey-legend"><span>Stage {at + 1} of {stages.length}</span><b>{stageLabel(e.stage)}</b><span>{stages[stages.length - 1].label}</span></div>
+    </div>
+  );
+}
+
+/** Status of each session, oldest to newest. */
+function StatusTrend({ notes }: { notes: MeetingNote[] }) {
+  const list = [...notes].slice(0, 8).reverse();
+  return (
+    <div className="mtg-trend" title="Status at each session, oldest → newest">
+      {list.length ? list.map((n, i) => <i key={n.id} className={i === list.length - 1 ? 'last' : ''} style={{ background: RAG[n.rag].color }} title={`${fmtDate(n.date)} · ${RAG[n.rag].label}`} />)
+        : <span className="muted">no sessions</span>}
+    </div>
+  );
+}
+
+function MiniStat({ value, label, color, children }: { value: ReactNode; label: string; color?: string; children?: ReactNode }) {
+  return (
+    <div className="mtg-mini">
+      <div className="mtg-mini-v" style={color ? { color } : undefined}>{value}</div>
+      <div className="mtg-mini-l">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+/** Milestones placed on a line by date, with a "today" marker. */
+function MilestoneTrack({ list, onPick }: { list: Milestone[]; onPick?: (m: Milestone) => void }) {
+  const dated = list.filter((x) => x.date);
+  if (!dated.length) return null;
+  const t = today();
+  const times = [...dated.map((x) => Date.parse(x.date!)), Date.parse(t)];
+  const min = Math.min(...times);
+  const max = Math.max(...times);
+  const pos = (d: string) => (max === min ? 50 : 3 + ((Date.parse(d) - min) / (max - min)) * 94);
+  return (
+    <div className="mtg-track">
+      <div className="mtg-track-line" />
+      <div className="mtg-track-fill" style={{ width: pos(t) + '%' }} />
+      <div className="mtg-today" style={{ left: pos(t) + '%' }}><span>Today</span></div>
+      {dated.map((x, i) => {
+        const p = pos(x.date!);
+        return (
+          <button key={x.id} type="button" className="mtg-dot" disabled={!onPick} style={{ left: p + '%', background: MS[x.status].color }}
+            title={`${x.title} · ${fmtDate(x.date!)} · ${MS[x.status].label}`} onClick={() => onPick?.(x)}>
+            <span className={'mtg-dot-label ' + (i % 2 ? 'down' : 'up') + (p < 15 ? ' edge-l' : p > 85 ? ' edge-r' : '')}><b>{x.title}</b><br />{fmtDate(x.date!, { day: '2-digit', month: 'short' })}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---------- page ----------
 export default function Meetings() {
   const { model: m, canEdit } = useWorkspace();
@@ -81,10 +148,12 @@ export default function Meetings() {
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<'attention' | 'name' | 'lead'>('attention');
   const [scope, setScope] = useState<'active' | 'archive'>('active');
+  const [status, setStatus] = useState<MeetingRag | 'none' | ''>('');
 
   const active = m.engagements.filter((e) => m.bucket(e) === 'active');
   const list = scope === 'active' ? active : m.engagements.filter((e) => m.bucket(e) !== 'active' && e.status !== 'deleted' && notesFor(e.id).length > 0);
-  const rows = list.filter((e) => !q || `${e.name} ${e.client} ${staffOf(e).map((id) => m.name(id)).join(' ')}`.toLowerCase().includes(q.toLowerCase()));
+  const rows = list.filter((e) => (!q || `${e.name} ${e.client} ${staffOf(e).map((id) => m.name(id)).join(' ')}`.toLowerCase().includes(q.toLowerCase()))
+    && (!status || (status === 'none' ? !notesFor(e.id).length : notesFor(e.id)[0]?.rag === status)));
   // Sort once on load / when the sort changes, so a card doesn't jump away while its notes are being typed.
   const [order, setOrder] = useState<string[]>([]);
   const attention = (e: Engagement) => {
@@ -108,6 +177,9 @@ export default function Meetings() {
   const thisSession = active.filter((e) => notesFor(e.id).some((n) => n.date === session)).length;
   const ragCount = (r: MeetingRag) => lasts.filter((n) => n?.rag === r).length;
   const noUpdate = lasts.filter((n) => !n).length;
+  const openMs = active.flatMap((e) => milestonesFor(e.id)).filter((x) => x.status !== 'done' && x.date);
+  const msLate = openMs.filter((x) => x.date! < today()).length;
+  const msSoon = openMs.filter((x) => x.date! >= today() && daysSince(x.date!) >= -14).length;
 
   return (
     <>
@@ -123,18 +195,20 @@ export default function Meetings() {
           </ol>
         </div>
         <div className="card mtg-pulse-card">
-          <div className="mtg-pulse-row">
-            <Ring pct={active.length ? (thisSession / active.length) * 100 : 0} color="var(--accent)" size={66} stroke={7}><b>{thisSession}</b><small>/{active.length}</small></Ring>
-            <div><div className="mtg-pulse-title">Notes written this session</div><div className="mtg-pulse-sub">{fmtDate(session)}</div></div>
-          </div>
-          <div className="mtg-pulse-title" style={{ marginTop: 14 }}>Status from the latest notes</div>
-          <div className="mtg-ragbar" role="img" aria-label="Status split">
-            {(['on-track', 'at-risk', 'off-track'] as MeetingRag[]).map((r) => ragCount(r) > 0 && <div key={r} style={{ flex: ragCount(r), background: RAG[r].color }} />)}
-            {noUpdate > 0 && <div style={{ flex: noUpdate, background: 'var(--border)' }} />}
-          </div>
-          <div className="mtg-legend">
-            {(['on-track', 'at-risk', 'off-track'] as MeetingRag[]).map((r) => <span key={r}><i style={{ background: RAG[r].color }} />{RAG[r].label} <b>{ragCount(r)}</b></span>)}
-            <span><i style={{ background: 'var(--border)' }} />No notes yet <b>{noUpdate}</b></span>
+          <div className="mtg-pulse-title">Portfolio status from the latest notes <span className="muted">· click to filter</span></div>
+          <Donut size={132} onPick={(k) => setStatus(status === k ? '' : (k as MeetingRag | 'none'))} buckets={[
+            ...(['on-track', 'at-risk', 'off-track'] as MeetingRag[]).map((r) => ({ key: r, label: RAG[r].label, count: ragCount(r), color: RAG[r].color })),
+            { key: 'none', label: 'No notes yet', count: noUpdate, color: '#3A4366' },
+          ]} />
+          <div className="mtg-pulse-stats">
+            <div className="mtg-pulse-row">
+              <Ring pct={active.length ? (thisSession / active.length) * 100 : 0} color="var(--accent)" size={54} stroke={6}><b>{thisSession}</b><small>/{active.length}</small></Ring>
+              <div><div className="mtg-pulse-title">Covered this session</div><div className="mtg-pulse-sub">{fmtDate(session)}</div></div>
+            </div>
+            <div className="mtg-pulse-row">
+              <div className="mtg-big" style={{ color: msLate ? 'var(--danger)' : 'var(--ok)' }}>{msLate}</div>
+              <div><div className="mtg-pulse-title">Milestones overdue</div><div className="mtg-pulse-sub">{msSoon} due in the next 14 days</div></div>
+            </div>
           </div>
         </div>
       </div>
@@ -146,6 +220,9 @@ export default function Meetings() {
         </select>
         <select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}>
           <option value="active">Active engagements ({active.length})</option><option value="archive">Archive: closed engagements with notes</option>
+        </select>
+        <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
+          <option value="">Any status</option>{(Object.keys(RAG) as MeetingRag[]).map((r) => <option key={r} value={r}>{RAG[r].label}</option>)}<option value="none">No notes yet</option>
         </select>
       </div>
 
@@ -169,6 +246,9 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite }: { e: Engage
   const earlier = notes.filter((n) => n !== current);
   const role = (pid: string) => (pid === e.leadId ? 'lead' : pid === e.supervisorId ? 'sup' : m.talentById.get(pid)?.department === 'Operations' ? 'ops' : 'member');
   const roleLabel = { lead: '👑 Leader', sup: '🧭 Supervisor', ops: '⚙️ Operations', member: '' };
+  const msDone = milestones.filter((x) => x.status === 'done').length;
+  const nextMs = milestones.filter((x) => x.status !== 'done' && x.date).sort((a, b) => a.date!.localeCompare(b.date!))[0];
+  const nextIn = nextMs ? -daysSince(nextMs.date!) : null;
 
   return (
     <div id={'mtg-' + e.id} className="card mtg-project" style={{ ['--rag' as string]: rag?.color ?? 'var(--border)' }}>
@@ -178,11 +258,24 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite }: { e: Engage
           <div className="mtg-project-name">{e.name}</div>
           <div className="mtg-project-meta">{e.client} · {e.sector} · {e.scope}</div>
         </div>
-        <div className="mtg-chips mtg-head-chips">
-          <span className="mtg-chip">📍 {stageLabel(e.stage)}</span>
-          <span className="mtg-chip" style={{ color: rag?.color ?? 'var(--text-faint)' }}>{rag ? `${rag.icon} ${rag.label}` : '⚪ No notes yet'}</span>
-          <span className={'mtg-chip' + (last && daysSince(last.date) > STALE_DAYS ? ' stale' : '')}>🗓 {last ? `Updated ${ago(last.date)}` : 'Never updated'}</span>
+        <div className="mtg-head-right">
+          <span className="mtg-rag-pill" style={{ background: rag?.color ?? 'var(--border)' }}>{rag ? rag.label : 'No notes yet'}</span>
+          <StatusTrend notes={notes} />
         </div>
+      </div>
+
+      <JourneyBar e={e} />
+
+      <div className="mtg-minis">
+        <MiniStat value={notes.length} label={notes.length === 1 ? 'session' : 'sessions'} />
+        <MiniStat value={last ? (daysSince(last.date) <= 0 ? 'Today' : `${daysSince(last.date)}d`) : '—'} label="since last update"
+          color={!last ? 'var(--text-faint)' : daysSince(last.date) > STALE_DAYS ? '#F0A54A' : 'var(--ok)'} />
+        <MiniStat value={`${msDone}/${milestones.length}`} label="milestones done">
+          <div className="mtg-mini-bar"><div style={{ width: (milestones.length ? (msDone / milestones.length) * 100 : 0) + '%' }} /></div>
+        </MiniStat>
+        <MiniStat value={nextMs ? (nextIn! < 0 ? `${-nextIn!}d late` : nextIn === 0 ? 'Today' : `in ${nextIn}d`) : '—'} label={nextMs ? `next: ${nextMs.title}` : 'no upcoming milestone'}
+          color={nextMs ? (nextIn! < 0 ? 'var(--danger)' : nextIn! <= 7 ? '#F0A54A' : 'var(--lavender)') : 'var(--text-faint)'} />
+        <MiniStat value={staffOf(e).length} label={`people · ${staffOf(e).filter((id) => m.talentById.get(id)?.department === 'Operations').length} Ops`} />
       </div>
 
       <div className="mtg-team">
@@ -201,9 +294,11 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite }: { e: Engage
         })}
       </div>
 
+      <MilestoneTrack list={milestones} onPick={canEdit ? (x) => modal.open(<MilestoneModal engagementId={e.id} milestone={x} />) : undefined} />
       <div className="mtg-milestones">
         <span className="mtg-label">🏁 Key milestones</span>
-        {milestones.map((x) => (
+        {milestones.some((x) => x.date) && (Object.keys(MS) as MilestoneStatus[]).map((k) => <span key={k} className="mtg-ms-legend"><i style={{ background: MS[k].color }} />{MS[k].label}</span>)}
+        {milestones.filter((x) => !x.date).map((x) => (
           <button key={x.id} type="button" className="mtg-ms-chip" style={{ ['--ms' as string]: MS[x.status].color }} disabled={!canEdit}
             title={`${MS[x.status].label}${canEdit ? ' — click to edit' : ''}`} onClick={() => modal.open(<MilestoneModal engagementId={e.id} milestone={x} />)}>
             <i>{MS[x.status].icon}</i>{x.title}{x.date && <small>{fmtDate(x.date, { day: '2-digit', month: 'short' })}</small>}
