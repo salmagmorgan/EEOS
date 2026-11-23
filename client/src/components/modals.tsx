@@ -7,6 +7,7 @@ import { emailAsText, emlFile, isEmail, mailtoLink, outlookAppLink, outlookWebLi
 const IS_PHONE = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 import { parseCpsCsv, scopeStages, stageLabel } from '../../../shared/schedule';
 import type { Engagement } from '../../../shared/types';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useWorkspace } from '../lib/workspace';
 import { Bars, CpsBar, LineChart } from './charts';
@@ -62,11 +63,12 @@ export function TeamPicker({ model, leadId, teamIds, supervisorId, onChange }: {
 }
 
 // ---------------- engagement ----------------
-export function EngagementModal({ id }: { id: string }) {
-  const { model, canEdit, act } = useWorkspace();
+export function EngagementModal({ id, initialTab = 'overview' }: { id: string; initialTab?: 'overview' | 'team' | 'schedule' | 'details' }) {
+  const { model, canEdit, act, data } = useWorkspace();
   const modal = useModal();
+  const navigate = useNavigate();
   const e = model.engagement(id);
-  const [tab, setTab] = useState<'overview' | 'team' | 'schedule' | 'details'>('overview');
+  const [tab, setTab] = useState<'overview' | 'team' | 'schedule' | 'details'>(initialTab);
   if (!e) return <ModalFrame title="Engagement">This engagement no longer exists.</ModalFrame>;
   const editable = canEdit && !e.historical && e.status !== 'deleted';
   const bucket = model.bucket(e);
@@ -103,6 +105,19 @@ export function EngagementModal({ id }: { id: string }) {
         {bucket === 'historical' ? <Tag className="tag-neutral">📁 Historical</Tag> : bucket === 'closed' ? <Tag className="tag-neutral">🔒 Closed</Tag> : bucket === 'paused' ? <Tag className="tag-warn">⏸ Paused</Tag> : <Tag className={healthClass(h)}>{h}</Tag>}
         {bucket === 'active' && <Tag className={priorityClass(model.priority(e))}>{model.priority(e)} priority</Tag>}
         {e.status === 'deleted' && <Tag className="tag-danger">Deleted</Tag>}
+        {(() => {
+          const notes = (data.meetingNotes ?? []).filter((n) => n.engagementId === e.id).sort((a, b) => b.date.localeCompare(a.date));
+          if (e.status === 'deleted' || (!notes.length && bucket !== 'active')) return null;
+          const last = notes[0];
+          const color = !last ? 'var(--text-faint)' : last.rag === 'on-track' ? 'var(--ok)' : last.rag === 'at-risk' ? '#F0A54A' : 'var(--danger)';
+          return (
+            <button type="button" className="mini-pill link-pill" title="Open this engagement in the Engagement Updates Meeting"
+              onClick={() => { modal.close(); navigate('/engagements/meeting?e=' + e.id); }}>
+              🗓 <span style={{ color }}>{last ? (last.rag === 'on-track' ? 'On track' : last.rag === 'at-risk' ? 'At risk' : 'Off track') : 'No meeting notes'}</span>
+              {last && <span className="muted"> · {notes.length} session{notes.length === 1 ? '' : 's'}</span>} →
+            </button>
+          );
+        })()}
       </div>
       <div className="tabs">
         {(['overview', 'team', 'schedule', 'details'] as const).map((t) => <button key={t} className={'tab' + (tab === t ? ' on' : '')} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>)}

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { LIFECYCLE } from '../../../shared/constants';
 import { HEALTH_VALUES, knownEnd, stageLabel } from '../../../shared/schedule';
 import type { Engagement } from '../../../shared/types';
@@ -9,8 +10,20 @@ import { api } from '../lib/api';
 import { useWorkspace } from '../lib/workspace';
 
 export default function Status() {
-  const { model: m, canEdit, act } = useWorkspace();
+  const { model: m, canEdit, act, data } = useWorkspace();
   const modal = useModal();
+  const navigate = useNavigate();
+  // Latest Engagement Updates Meeting notes per engagement.
+  const lastNote = useMemo(() => {
+    const map = new Map<string, { date: string; rag: string; n: number; key: string }>();
+    for (const n of data.meetingNotes ?? []) {
+      const cur = map.get(n.engagementId);
+      const key = n.date + n.createdAt;
+      if (!cur || key > cur.key) map.set(n.engagementId, { date: n.date, rag: n.rag, n: (cur?.n ?? 0) + 1, key });
+      else cur.n++;
+    }
+    return map;
+  }, [data.meetingNotes]);
   const [q, setQ] = useState('');
   const [client, setClient] = useState('');
   const [stage, setStage] = useState('');
@@ -80,7 +93,7 @@ export default function Status() {
         <div className="table-wrap">
           {rows.length ? (
             <table className="data">
-              <thead><tr><th>Engagement</th><th>Status</th><th>Client</th><th>Stage</th><th>Lead</th><th>Health</th><th>Priority</th><th>Timeline</th>{canEdit && <th>Action</th>}</tr></thead>
+              <thead><tr><th>Engagement</th><th>Status</th><th>Client</th><th>Stage</th><th>Lead</th><th>Health</th><th>Priority</th><th>Timeline</th><th>Latest update</th>{canEdit && <th>Action</th>}</tr></thead>
               <tbody>
                 {rows.map((e) => {
                   const bucket = m.bucket(e);
@@ -94,6 +107,19 @@ export default function Status() {
                       <td>{bucket === 'active' ? <Tag className={healthClass(h)}>{h}</Tag> : '—'}</td>
                       <td>{bucket === 'active' ? <Tag className={priorityClass(m.priority(e))}>{m.priority(e)}</Tag> : '—'}</td>
                       <td>{bucket !== 'active' || !info ? '—' : info.isComplete ? <Tag className="tag-ok">✅ Complete</Tag> : info.daysLeft === null ? <span className="small muted">No end date</span> : <Tag className={info.daysLeft < 0 ? 'tag-danger' : info.closingSoon ? 'tag-warn' : 'tag-neutral'}>{info.daysLeft < 0 ? `${-info.daysLeft}d overdue` : `${info.daysLeft}d left`}</Tag>}{bucket === 'active' && <div className="small muted">{e.customCps?.length ? '📤 CPS' : 'No CPS'}</div>}</td>
+                      <td onClick={(x) => x.stopPropagation()}>
+                        {(() => {
+                          const ln = lastNote.get(e.id);
+                          if (!ln && bucket !== 'active') return <span className="small muted">—</span>;
+                          const cls = !ln ? 'tag-neutral' : ln.rag === 'on-track' ? 'tag-ok' : ln.rag === 'at-risk' ? 'tag-warn' : 'tag-danger';
+                          return (
+                            <button className="btn-reset" title="Open in the Engagement Updates Meeting" onClick={() => navigate('/engagements/meeting?e=' + e.id)}>
+                              <Tag className={cls}>🗓 {!ln ? 'No notes' : ln.rag === 'on-track' ? 'On track' : ln.rag === 'at-risk' ? 'At risk' : 'Off track'}</Tag>
+                              {ln && <div className="small muted">{new Date(ln.date + 'T00:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' })} · {ln.n} session{ln.n === 1 ? '' : 's'}</div>}
+                            </button>
+                          );
+                        })()}
+                      </td>
                       {canEdit && (
                         <td onClick={(x) => x.stopPropagation()}>
                           {bucket === 'historical' ? <span className="small muted">Read only</span> : (

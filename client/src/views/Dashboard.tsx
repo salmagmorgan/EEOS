@@ -4,7 +4,7 @@ import { Bars, Donut, Heatmap, LineChart, StageStrip } from '../components/chart
 import { EngagementListModal, TalentListModal, TalentModal } from '../components/modals';
 import { Card, Empty, useModal } from '../components/ui';
 import { stageLabel } from '../../../shared/schedule';
-import { useModel } from '../lib/workspace';
+import { useModel, useWorkspace } from '../lib/workspace';
 
 export const UTIL_BUCKETS = [
   { key: 'Underutilized', label: 'Underutilized (<75%)', color: '#B1A7DA' },
@@ -86,6 +86,7 @@ export default function Dashboard() {
           ) : <Empty>Every active engagement has a team — no staffing gaps.</Empty>}
         </Card>
       </div>
+      <MeetingPanel />
       <div className="row-2">
         <Card title="Utilization heatmap — busiest people" sub={<span style={{ cursor: 'pointer' }} onClick={() => nav('/traffic/capacity')}>All talents →</span>}>
           <div className="table-wrap"><Heatmap model={m} talents={featured} onPick={(id) => modal.open(<TalentModal id={id} />)} /></div>
@@ -99,5 +100,43 @@ export default function Dashboard() {
         </Card>
       </div>
     </>
+  );
+}
+
+/** Status from the latest Engagement Updates Meeting notes, linked to the meeting page. */
+function MeetingPanel() {
+  const { model: m, data } = useWorkspace();
+  const nav = useNavigate();
+  const latest = new Map<string, { key: string; rag: string; notes: string }>();
+  for (const n of data.meetingNotes ?? []) {
+    const cur = latest.get(n.engagementId);
+    const key = n.date + n.createdAt;
+    if (!cur || key > cur.key) latest.set(n.engagementId, { key, rag: n.rag, notes: n.notes || n.whereWeAre || n.nextSteps });
+  }
+  const rows = m.active.map((e) => ({ e, n: latest.get(e.id) }));
+  const count = (r: string) => rows.filter((x) => x.n?.rag === r).length;
+  const none = rows.filter((x) => !x.n).length;
+  const watch = rows.filter((x) => x.n && x.n.rag !== 'on-track').sort((a, b) => (a.n!.rag === 'off-track' ? -1 : 1) - (b.n!.rag === 'off-track' ? -1 : 1)).slice(0, 4);
+  const tiles: [string, number, string, string][] = [['On track', count('on-track'), 'var(--ok)', 'on-track'], ['At risk', count('at-risk'), '#F0A54A', 'at-risk'], ['Off track', count('off-track'), 'var(--danger)', 'off-track'], ['No notes yet', none, 'var(--text-faint)', 'none']];
+  return (
+    <Card title="🗓 Engagement updates" sub={<span style={{ cursor: 'pointer' }} onClick={() => nav('/engagements/meeting')}>Updates meeting →</span>} style={{ marginBottom: 16 }}>
+      <div className="dash-mtg">
+        <div className="dash-mtg-tiles">
+          {tiles.map(([l, v, c, k]) => (
+            <button key={l} className="dash-mtg-tile" onClick={() => nav('/engagements/meeting?status=' + k)} style={{ borderTopColor: c }}>
+              <b style={{ color: c }}>{v}</b><span>{l}</span>
+            </button>
+          ))}
+        </div>
+        <div className="dash-mtg-watch">
+          {watch.length ? watch.map(({ e, n }) => (
+            <button key={e.id} className="dash-mtg-item" onClick={() => nav('/engagements/meeting?e=' + e.id)}>
+              <i style={{ background: n!.rag === 'off-track' ? 'var(--danger)' : '#F0A54A' }} />
+              <div><b>{e.name}</b><small>{n!.notes.split('\n')[0].slice(0, 90) || 'No text'} · {m.name(e.leadId)}</small></div>
+            </button>
+          )) : <div className="small muted">{none === rows.length ? 'No meeting notes yet — open the Engagement Updates Meeting to start.' : 'Nothing at risk or off track in the latest notes. 🎉'}</div>}
+        </div>
+      </div>
+    </Card>
   );
 }
