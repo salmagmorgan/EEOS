@@ -1,7 +1,7 @@
 /* Workspace reads, audited mutations and undo. */
 import type { AuditEntry, User, WorkspaceData } from '../shared/types.js';
 import {
-  type DB, type Entity, type EntityType, type Exec, all, insertionOrder, engagementFromRow, getEntity, getMeta, inTransaction, one, putEntity,
+  type DB, type Entity, type EntityType, type Exec, all, insertionOrder, engagementFromRow, getEntity, getMeta, inTransaction, meetingNoteFromRow, milestoneFromRow, one, putEntity,
   ruleFromRow, setMetaStatement, talentFromRow, trajectoryFromRow,
 } from './db.js';
 
@@ -21,13 +21,15 @@ export async function readVersion(db: DB): Promise<{ version: number; updatedAt:
 export async function readWorkspace(db: DB): Promise<WorkspaceData> {
   // One round trip for everything (matters when the database is remote).
   const order = insertionOrder(db);
-  const [meta, talents, engagements, clients, rules, trajectory] = await db.batch([
+  const [meta, talents, engagements, clients, rules, trajectory, notes, milestones] = await db.batch([
     "SELECT key, value FROM meta WHERE key IN ('version','updatedAt','updatedBy')",
     `SELECT * FROM talents ORDER BY ${order}`,
     `SELECT * FROM engagements ORDER BY ${order}`,
     `SELECT id,name,industry,country,owner FROM clients ORDER BY ${order}`,
     'SELECT * FROM capacity_rules',
     'SELECT * FROM trajectory ORDER BY id',
+    'SELECT data FROM meeting_notes ORDER BY meeting_date, created_at',
+    'SELECT data FROM milestones ORDER BY created_at',
   ], 'read');
   const m = Object.fromEntries(meta.rows.map((r) => [r.key as string, r.value as string]));
   const rows = (rs: { rows: unknown[] }) => rs.rows as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -40,6 +42,8 @@ export async function readWorkspace(db: DB): Promise<WorkspaceData> {
     clients: rows(clients).map((r) => ({ id: r.id, name: r.name, industry: r.industry, country: r.country, owner: r.owner })),
     capacityRules: rows(rules).map(ruleFromRow),
     trajectory: rows(trajectory).map(trajectoryFromRow),
+    meetingNotes: rows(notes).map(meetingNoteFromRow),
+    milestones: rows(milestones).map(milestoneFromRow),
   };
 }
 
@@ -57,6 +61,8 @@ export interface MutationSpec<T extends Entity> {
   /** Receives a copy of the current entity (or null) and returns the new state, or null to delete. */
   apply: (current: T | null) => T | null;
   details?: (before: T | null, after: T | null) => string;
+  /** Name shown in the audit trail (defaults to the entity's name or title). */
+  entityName?: string;
 }
 
 /** Apply one change to one entity in a transaction and record before/after in the audit log. */
@@ -71,7 +77,7 @@ export async function mutate<T extends Entity>(db: DB, user: User, spec: Mutatio
     // Store the canonical (re-read) form so undo can compare it exactly later.
     const stored = after ? await getEntity(tx, spec.type, spec.id) : null;
     const named = (after ?? before) as { name?: string; title?: string; department?: string } | null;
-    const entityName = named?.name ?? (named?.title ? `${named.title} · ${named.department}` : '');
+    const entityName = spec.entityName ?? named?.name ?? (named?.title ? `${named.title} · ${named.department}` : '');
     await tx.execute({
       sql: 'INSERT INTO audit_log (at,user_id,user_name,action,entity_type,entity_id,entity_name,details,before_json,after_json) VALUES (?,?,?,?,?,?,?,?,?,?)',
       args: [now, user.id, user.name, spec.action, spec.type, spec.id, entityName, spec.details?.(before, after) ?? '',

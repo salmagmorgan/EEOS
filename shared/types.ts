@@ -129,6 +129,51 @@ export interface AuditEntry {
   undoneBy: string | null;
 }
 
+/* ---------- Engagement updates meeting ---------- */
+export type MeetingRag = 'on-track' | 'at-risk' | 'off-track';
+/** "Who does what": one task from a meeting, owned by a team member. */
+export interface MeetingAction {
+  id: string;
+  task: string;
+  ownerId: string | null;
+  due: string | null; // YYYY-MM-DD
+  done: boolean;
+}
+export interface MeetingComment {
+  id: string;
+  by: string;
+  at: string;
+  text: string;
+}
+/** The notes from one engagement updates meeting (session). */
+export interface MeetingNote {
+  id: string;
+  engagementId: string;
+  date: string; // YYYY-MM-DD, the meeting date
+  rag: MeetingRag;
+  /** Leader's own estimate of overall progress, 0-100 (null = not given). */
+  progress: number | null;
+  whereWeAre: string;
+  challenges: string;
+  nextSteps: string;
+  actions: MeetingAction[];
+  comments: MeetingComment[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export type MilestoneStatus = 'planned' | 'in-progress' | 'done' | 'delayed';
+/** A key milestone of an engagement, referenced in its update meetings. */
+export interface Milestone {
+  id: string;
+  engagementId: string;
+  title: string;
+  date: string | null; // YYYY-MM-DD
+  status: MilestoneStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Everything the web app needs to render, in one payload. */
 export interface WorkspaceData {
   version: number;
@@ -139,6 +184,8 @@ export interface WorkspaceData {
   clients: Client[];
   capacityRules: CapacityRule[];
   trajectory: TrajectoryRow[];
+  meetingNotes?: MeetingNote[];
+  milestones?: Milestone[];
 }
 
 /** Portable seed format used by `npm run seed` and the artifact importer. */
@@ -150,6 +197,8 @@ export interface SeedFile {
   clients: Client[];
   capacityRules: CapacityRule[];
   trajectory: Omit<TrajectoryRow, 'id'>[];
+  meetingNotes?: MeetingNote[];
+  milestones?: Milestone[];
   audit?: { at: string; userName: string; action: string; entityName: string; details: string }[];
 }
 

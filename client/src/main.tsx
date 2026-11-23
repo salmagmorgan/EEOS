@@ -15,6 +15,7 @@ const Copilot = lazy(() => import('./views/Copilot'));
 const NewEngagement = lazy(() => import('./views/NewEngagement'));
 const Lifecycle = lazy(() => import('./views/Lifecycle'));
 const Status = lazy(() => import('./views/Status'));
+const Meetings = lazy(() => import('./views/Meetings'));
 const Profitability = lazy(() => import('./views/Profitability'));
 const EngagementTrajectory = lazy(() => import('./views/EngagementTrajectory'));
 const Suggestions = lazy(() => import('./views/Suggestions'));
@@ -53,6 +54,7 @@ function App() {
               <Route path="engagements/new" element={<NewEngagement />} />
               <Route path="engagements/lifecycle" element={<Lifecycle />} />
               <Route path="engagements/status" element={<Status />} />
+              <Route path="engagements/meeting" element={<Meetings />} />
               <Route path="engagements/profitability" element={<Profitability />} />
               <Route path="engagements/trajectory" element={<EngagementTrajectory />} />
               <Route path="engagements/suggestions" element={<Suggestions />} />

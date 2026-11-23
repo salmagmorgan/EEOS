@@ -24,6 +24,7 @@ export const api = {
   post: <T = unknown>(url: string, body?: unknown) => request<T>('POST', url, body ?? {}),
   put: <T = unknown>(url: string, body?: unknown) => request<T>('PUT', url, body ?? {}),
   patch: <T = unknown>(url: string, body?: unknown) => request<T>('PATCH', url, body ?? {}),
+  del: <T = unknown>(url: string) => request<T>('DELETE', url),
 };
 
 /** Stream a text response (used by the AI Copilot). */

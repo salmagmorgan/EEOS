@@ -2,7 +2,7 @@ import { createClient, type InArgs } from '@libsql/client';
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
-import type { CapacityRule, Client, Engagement, SeedFile, Talent, TrajectoryRow } from '../shared/types.js';
+import type { CapacityRule, Client, Engagement, MeetingNote, Milestone, SeedFile, Talent, TrajectoryRow } from '../shared/types.js';
 
 /* EEOS runs on either of two databases, behind one small interface:
    - SQLite: a local file in development, or Turso (hosted SQLite) in production
@@ -277,6 +277,26 @@ const MIGRATIONS: (string | { sqlite: string; postgres: string })[] = [
     SELECT 'Project Executive', 'Operations', project, leadership, 0 FROM capacity_rules
     WHERE title = 'Field Executive' AND department = 'Operations'
     ON CONFLICT DO NOTHING`,
+  // 5: engagement updates meetings — session notes and key milestones (stored as JSON documents).
+  `
+  CREATE TABLE meeting_notes (
+    id TEXT PRIMARY KEY,
+    engagement_id TEXT NOT NULL,
+    meeting_date TEXT NOT NULL,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS meeting_notes_engagement ON meeting_notes(engagement_id, meeting_date);
+  CREATE TABLE milestones (
+    id TEXT PRIMARY KEY,
+    engagement_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS milestones_engagement ON milestones(engagement_id)
+  `,
 ];
 
 /** Postgres flavour of the schema: same tables and columns, Postgres types. */
@@ -358,8 +378,11 @@ export const trajectoryFromRow = (r: Row): TrajectoryRow => ({
 });
 
 /** Entity tables that support generic write/delete (used by mutations and undo). */
-export type EntityType = 'talent' | 'engagement' | 'client' | 'capacityRule';
-export type Entity = Talent | Engagement | Client | CapacityRule;
+export type EntityType = 'talent' | 'engagement' | 'client' | 'capacityRule' | 'meetingNote' | 'milestone';
+export type Entity = Talent | Engagement | Client | CapacityRule | MeetingNote | Milestone;
+const docFromRow = <T>(r: Row): T => JSON.parse(r.data) as T;
+export const meetingNoteFromRow = (r: Row): MeetingNote => docFromRow<MeetingNote>(r);
+export const milestoneFromRow = (r: Row): Milestone => docFromRow<Milestone>(r);
 
 export async function getEntity(ex: Exec, type: EntityType, id: string): Promise<Entity | null> {
   switch (type) {
@@ -374,6 +397,8 @@ export async function getEntity(ex: Exec, type: EntityType, id: string): Promise
       const r = await one(ex, 'SELECT * FROM capacity_rules WHERE title=? AND department=?', [title, department]);
       return r ? ruleFromRow(r) : null;
     }
+    case 'meetingNote': { const r = await one(ex, 'SELECT data FROM meeting_notes WHERE id=?', [id]); return r ? meetingNoteFromRow(r) : null; }
+    case 'milestone': { const r = await one(ex, 'SELECT data FROM milestones WHERE id=?', [id]); return r ? milestoneFromRow(r) : null; }
   }
 }
 
@@ -403,6 +428,14 @@ function entityRow(type: EntityType, value: Entity): EntityRow {
       const r = value as CapacityRule;
       return row('capacity_rules', ['title', 'department'], ['title', 'department', 'project', 'leadership', 'placeholder'], [r.title, r.department, r.project, r.leadership, r.placeholder ? 1 : 0]);
     }
+    case 'meetingNote': {
+      const n = value as MeetingNote;
+      return row('meeting_notes', ['id'], ['id', 'engagement_id', 'meeting_date', 'data', 'created_at', 'updated_at'], [n.id, n.engagementId, n.date, JSON.stringify(n), n.createdAt, n.updatedAt]);
+    }
+    case 'milestone': {
+      const m = value as Milestone;
+      return row('milestones', ['id'], ['id', 'engagement_id', 'data', 'created_at', 'updated_at'], [m.id, m.engagementId, JSON.stringify(m), m.createdAt, m.updatedAt]);
+    }
   }
 }
 
@@ -413,7 +446,7 @@ export function putStatement(type: EntityType, id: string, value: Entity | null)
       const [title, department] = id.split('__');
       return { sql: 'DELETE FROM capacity_rules WHERE title=? AND department=?', args: [title, department] };
     }
-    const table = { talent: 'talents', engagement: 'engagements', client: 'clients' }[type];
+    const table = { talent: 'talents', engagement: 'engagements', client: 'clients', meetingNote: 'meeting_notes', milestone: 'milestones' }[type];
     return { sql: `DELETE FROM ${table} WHERE id=?`, args: [id] };
   }
   const r = entityRow(type, value);
@@ -453,7 +486,7 @@ export async function isEmpty(db: DB): Promise<boolean> {
 /** Replace all business data with a seed file, atomically. Users and sessions are kept. */
 export async function loadSeed(db: DB, seed: SeedFile): Promise<void> {
   const version = Number((await getMeta(db, 'version')) ?? 0) + 1;
-  const stmts: StmtLike[] = ['talents', 'engagements', 'clients', 'capacity_rules', 'trajectory', 'audit_log'].map((t) => `DELETE FROM ${t}`);
+  const stmts: StmtLike[] = ['talents', 'engagements', 'clients', 'capacity_rules', 'trajectory', 'audit_log', 'meeting_notes', 'milestones'].map((t) => `DELETE FROM ${t}`);
   const bulk = (type: EntityType, items: Entity[]) => {
     if (!items.length) return;
     const first = entityRow(type, items[0]);
@@ -463,6 +496,8 @@ export async function loadSeed(db: DB, seed: SeedFile): Promise<void> {
   bulk('engagement', seed.engagements);
   bulk('client', seed.clients);
   bulk('capacityRule', seed.capacityRules);
+  bulk('meetingNote', seed.meetingNotes ?? []);
+  bulk('milestone', seed.milestones ?? []);
   stmts.push(...bulkInsert('trajectory', ['year', 'month', 'engagement', 'sector', 'scope', 'status', 'talent', 'talent_id', 'title', 'role', 'client'],
     seed.trajectory.map((r) => [r.year, r.month, r.engagement, r.sector, r.scope, r.status, r.talent, r.talentId, r.title, r.role, r.client])));
   stmts.push(...bulkInsert('audit_log', ['at', 'user_id', 'user_name', 'action', 'entity_type', 'entity_id', 'entity_name', 'details'],

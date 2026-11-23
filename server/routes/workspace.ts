@@ -73,6 +73,7 @@ export function workspaceRoutes(db: DB, opts: { demoSeedPath: string }): Router 
       generatedAt: new Date().toISOString(), description: 'EEOS backup',
       talents: w.talents, engagements: w.engagements, clients: w.clients, capacityRules: w.capacityRules,
       trajectory: w.trajectory.map(({ id: _id, ...rest }) => rest), // eslint-disable-line @typescript-eslint/no-unused-vars
+      meetingNotes: w.meetingNotes ?? [], milestones: w.milestones ?? [],
     };
     res.setHeader('Content-Disposition', `attachment; filename="eeos-backup-${seed.generatedAt.slice(0, 10)}.json"`);
     return seed;

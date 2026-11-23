@@ -196,6 +196,67 @@ describe.each([
     expect(JSON.stringify(audit)).toContain(`${t.name} → Renamed Person`);
   });
 
+  it('keeps engagement update meeting notes, actions, comments and milestones (audited, undoable, backed up)', async () => {
+    const H = { 'X-EEOS': '1' };
+    const w = (await admin.get('/api/workspace').expect(200)).body;
+    const e = w.engagements.find((x: { status: string; historical: boolean }) => x.status === 'active' && !x.historical);
+    expect(w.meetingNotes).toEqual([]);
+    expect(w.milestones).toEqual([]);
+
+    // viewers can read but not write
+    await viewer.post(`/api/engagements/${e.id}/meeting-notes`).set(H).send({ date: '2026-11-20', rag: 'on-track' }).expect(403);
+    await admin.post(`/api/engagements/${e.id}/meeting-notes`).set(H).send({ date: 'soon', rag: 'on-track' }).expect(400);
+
+    const ms = (await admin.post(`/api/engagements/${e.id}/milestones`).set(H).send({ title: 'Inception report', date: '2026-12-01' }).expect(200)).body.milestone;
+    expect(ms).toMatchObject({ engagementId: e.id, title: 'Inception report', status: 'planned' });
+    await admin.patch(`/api/milestones/${ms.id}`).set(H).send({ status: 'done' }).expect(200);
+
+    const first = (await admin.post(`/api/engagements/${e.id}/meeting-notes`).set(H).send({
+      date: '2026-11-10', rag: 'at-risk', progress: 40, whereWeAre: '  Fieldwork underway  ', challenges: 'Client data late', nextSteps: 'Chase data',
+      actions: [{ task: 'Send data request', ownerId: e.leadId, due: '2026-11-12' }, { task: 'Book interviews', ownerId: null, due: '' }],
+    }).expect(200)).body.note;
+    expect(first).toMatchObject({ engagementId: e.id, rag: 'at-risk', progress: 40, whereWeAre: 'Fieldwork underway', createdBy: 'Ada Admin', comments: [] });
+    expect(first.actions).toHaveLength(2);
+    expect(first.actions[1]).toMatchObject({ due: null, done: false });
+
+    const ticked = (await admin.put(`/api/meeting-notes/${first.id}/actions/${first.actions[0].id}`).set(H).send({ done: true }).expect(200)).body.note;
+    expect(ticked.actions[0].done).toBe(true);
+    const commented = (await admin.post(`/api/meeting-notes/${first.id}/comments`).set(H).send({ text: 'Escalated to the client' }).expect(200)).body.note;
+    expect(commented.comments[0]).toMatchObject({ by: 'Ada Admin', text: 'Escalated to the client' });
+    await viewer.post(`/api/meeting-notes/${first.id}/comments`).set(H).send({ text: 'x' }).expect(403);
+
+    const second = (await admin.post(`/api/engagements/${e.id}/meeting-notes`).set(H).send({ date: '2026-11-17', rag: 'on-track', whereWeAre: 'Back on track' }).expect(200)).body.note;
+    const edited = (await admin.patch(`/api/meeting-notes/${second.id}`).set(H).send({ nextSteps: 'Draft report' }).expect(200)).body.note;
+    expect(edited).toMatchObject({ whereWeAre: 'Back on track', nextSteps: 'Draft report', rag: 'on-track' });
+
+    const after = (await admin.get('/api/workspace').expect(200)).body;
+    expect(after.meetingNotes.map((n: { date: string }) => n.date)).toEqual(['2026-11-10', '2026-11-17']);
+    expect(after.milestones[0].status).toBe('done');
+    const audit = (await admin.get('/api/audit').expect(200)).body.entries;
+    expect(audit[0]).toMatchObject({ action: 'Edited meeting notes', entityName: e.name });
+    expect(audit.some((a: { action: string }) => a.action === 'Commented on meeting notes')).toBe(true);
+
+    // undo the edit, then delete and restore via undo
+    await admin.post('/api/audit/undo-last').set(H).expect(200);
+    expect((await admin.get('/api/workspace')).body.meetingNotes.find((n: { id: string }) => n.id === second.id).nextSteps).toBe('');
+    await admin.delete(`/api/meeting-notes/${second.id}`).set(H).expect(200);
+    expect((await admin.get('/api/workspace')).body.meetingNotes).toHaveLength(1);
+    await admin.post('/api/audit/undo-last').set(H).expect(200);
+    expect((await admin.get('/api/workspace')).body.meetingNotes).toHaveLength(2);
+
+    // backup carries notes and milestones; restoring it brings them back
+    const backup = (await admin.get('/api/admin/backup').expect(200)).body;
+    expect(backup.meetingNotes).toHaveLength(2);
+    expect(backup.milestones).toHaveLength(1);
+    await admin.post('/api/admin/restore').set(H).send(backup).expect(200);
+    const restored = (await admin.get('/api/workspace')).body;
+    expect(restored.meetingNotes.find((n: { id: string }) => n.id === first.id).comments).toHaveLength(1);
+    expect(restored.milestones).toHaveLength(1);
+
+    await admin.delete(`/api/milestones/${ms.id}`).set(H).expect(200);
+    await admin.delete('/api/meeting-notes/nope').set(H).expect(404);
+  });
+
   it('validates input', async () => {
     const res = await admin.post('/api/engagements').set('X-EEOS', '1').send({ name: '', client: 'C', sector: 'S', scope: 'Research', leadId: 'nobody' });
     expect(res.status).toBe(400);
