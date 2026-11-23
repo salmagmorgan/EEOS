@@ -82,7 +82,8 @@ export function meetingRoutes(db: DB): Router {
     const body = parse(noteInput.partial(), req.body);
     return {
       note: await saveNote(me(req), e, n.id, 'Edited meeting notes', (x) => ({
-        ...x!, ...Object.fromEntries(Object.entries(body).filter(([k, v]) => v !== undefined && k !== 'actions')),
+        ...x!, editedAt: new Date().toISOString(), editedBy: me(req).name,
+        ...Object.fromEntries(Object.entries(body).filter(([k, v]) => v !== undefined && k !== 'actions')),
         ...(body.actions ? { actions: cleanActions(body.actions) } : {}),
       }) as MeetingNote),
     };

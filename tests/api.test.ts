@@ -227,7 +227,8 @@ describe.each([
 
     const second = (await admin.post(`/api/engagements/${e.id}/meeting-notes`).set(H).send({ date: '2026-11-17', rag: 'on-track', whereWeAre: 'Back on track' }).expect(200)).body.note;
     const edited = (await admin.patch(`/api/meeting-notes/${second.id}`).set(H).send({ nextSteps: 'Draft report', notes: 'Analysis started', rag: 'at-risk' }).expect(200)).body.note;
-    expect(edited).toMatchObject({ whereWeAre: 'Back on track', nextSteps: 'Draft report', notes: 'Analysis started', rag: 'at-risk' });
+    expect(edited).toMatchObject({ whereWeAre: 'Back on track', nextSteps: 'Draft report', notes: 'Analysis started', rag: 'at-risk', editedBy: 'Ada Admin' });
+    expect(commented.editedAt).toBeUndefined();
 
     const after = (await admin.get('/api/workspace').expect(200)).body;
     expect(after.meetingNotes.map((n: { date: string }) => n.date)).toEqual(['2026-11-10', '2026-11-17']);

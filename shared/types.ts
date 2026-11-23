@@ -164,6 +164,9 @@ export interface MeetingNote {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** When the note itself was last edited (not comments or ticked actions). */
+  editedAt?: string;
+  editedBy?: string;
 }
 export type MilestoneStatus = 'planned' | 'in-progress' | 'done' | 'delayed';
 /** A key milestone of an engagement, referenced in its update meetings. */

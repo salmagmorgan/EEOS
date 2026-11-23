@@ -455,8 +455,6 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite, full }: { e: 
   const last = notes[0];
   const rag = last ? RAG[last.rag] : null;
   const pct = last?.progress ?? progressFor(e.scope, e.stage);
-  const current = notes.find((n) => n.date === session);
-  const earlier = notes.filter((n) => n !== current);
   const role = (pid: string) => (pid === e.leadId ? 'lead' : pid === e.supervisorId ? 'sup' : m.talentById.get(pid)?.department === 'Operations' ? 'ops' : 'member');
   const roleLabel = { lead: '👑 Leader', sup: '🧭 Supervisor', ops: '⚙️ Operations', member: '' };
   // With a CPS uploaded, its stages are milestones too (status from their dates) — nothing to type in.
@@ -501,7 +499,7 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite, full }: { e: 
 
       <div className="mtg-minis">
         <MiniStat value={notes.length} label={notes.length === 1 ? 'session' : 'sessions'} onClick={() => jump('hist')} />
-        <MiniStat onClick={() => jump(current ? 'notes' : 'hist')} value={last ? (daysSince(last.date) <= 0 ? 'Today' : `${daysSince(last.date)}d`) : '—'} label="since last update"
+        <MiniStat onClick={() => jump('hist')} value={last ? (daysSince(last.date) <= 0 ? 'Today' : `${daysSince(last.date)}d`) : '—'} label="since last update"
           color={!last ? 'var(--text-faint)' : daysSince(last.date) > STALE_DAYS ? '#F0A54A' : 'var(--ok)'} />
         <MiniStat onClick={() => jump('ms')} value={`${msDone}/${allMs.length}`} label={cps ? 'milestones done (incl. CPS)' : 'milestones done'}>
           <div className="mtg-mini-bar"><div style={{ width: (allMs.length ? (msDone / allMs.length) * 100 : 0) + '%' }} /></div>
@@ -542,58 +540,57 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite, full }: { e: 
       </div>
 
       <div className="mtg-notes-grid" id={'mtg-notes-' + e.id}>
-        {canWrite ? <NoteBox key={e.id + session + (current?.id ?? '')} e={e} session={session} current={current} suggestedRag={last?.rag} /> : (
-          current ? <div className="mtg-note-col"><div className="mtg-label">This session · {fmtDate(session)}</div><NoteItem note={current} /></div>
-            : <div className="mtg-note-col small muted">{canEdit ? 'This engagement isn’t active, so no new notes.' : 'No notes for this session yet.'}</div>
-        )}
-        <div id={'mtg-hist-' + e.id} style={{ minWidth: 0 }}><History e={e} notes={earlier} expanded={full} /></div>
+        {canWrite ? <NoteBox key={e.id + session} e={e} session={session} suggestedRag={last?.rag} />
+          : <div className="mtg-note-col small muted">{canEdit ? 'This engagement isn’t active, so no new notes.' : 'View-only access: editors write the notes.'}</div>}
+        <div id={'mtg-hist-' + e.id} style={{ minWidth: 0 }}><History e={e} notes={notes} expanded={full} session={session} /></div>
       </div>
     </div>
   );
 }
 
-/** Today's notes for one engagement: a single box, saved as this session's note (or updating it). */
-function NoteBox({ e, session, current, suggestedRag }: { e: Engagement; session: string; current?: MeetingNote; suggestedRag?: MeetingRag }) {
+/** Write a note for this session. Saving adds it to the notes list below and clears the box. */
+function NoteBox({ e, session, suggestedRag }: { e: Engagement; session: string; suggestedRag?: MeetingRag }) {
   const { act } = useWorkspace();
-  const modal = useModal();
-  const [text, setText] = useState(current?.notes ?? '');
-  const [rag, setRag] = useState<MeetingRag>(current?.rag ?? suggestedRag ?? 'on-track');
+  const [text, setText] = useState('');
+  const [rag, setRag] = useState<MeetingRag>(suggestedRag ?? 'on-track');
   const [busy, setBusy] = useState(false);
-  const dirty = text.trim() !== (current?.notes ?? '').trim() || rag !== (current?.rag ?? suggestedRag ?? 'on-track');
+  useEffect(() => { if (suggestedRag) setRag(suggestedRag); }, [suggestedRag]);
   const save = async () => {
     setBusy(true);
-    await act(() => (current ? api.patch(`/meeting-notes/${current.id}`, { notes: text, rag }) : api.post(`/engagements/${e.id}/meeting-notes`, { date: session, notes: text, rag })), `Notes saved for ${e.name}`);
+    const ok = await act(() => api.post(`/engagements/${e.id}/meeting-notes`, { date: session, notes: text, rag }), 'Note saved — it’s in the notes list');
     setBusy(false);
+    if (ok) setText('');
   };
   return (
     <div className="mtg-note-col">
-      <div className="mtg-label">✍️ Notes · session of {fmtDate(session)}{current && <span className="muted"> — saved by {current.createdBy}</span>}</div>
-      <textarea className="mtg-textarea" rows={5} value={text} onChange={(x) => setText(x.target.value)}
+      <div className="mtg-label">✍️ Add a note · session of {fmtDate(session)}</div>
+      <textarea className="mtg-textarea" rows={4} value={text} onChange={(x) => setText(x.target.value)}
         placeholder="Where are we now · challenges · next steps · who does what · milestones" />
-      {current && noteText(current).filter((p) => p.label).map((p) => <div key={p.label} className="small"><b>{p.label}:</b> {p.text}</div>)}
       <div className="mtg-note-actions">
-        <div className="mtg-seg">
-          {(Object.keys(RAG) as MeetingRag[]).map((r) => (
-            <button key={r} type="button" className={rag === r ? 'on' : ''} style={rag === r ? { background: RAG[r].color, borderColor: RAG[r].color } : undefined} onClick={() => setRag(r)}>{RAG[r].label}</button>
-          ))}
-        </div>
-        <div className="row" style={{ gap: 6 }}>
-          {current && <button className="btn btn-ghost btn-sm" title="Delete these notes" onClick={() => modal.open(<Confirm title="Delete these notes?" danger confirmLabel="🗑 Delete" message={<>Delete the {fmtDate(current.date)} notes for <b>{e.name}</b>? You can undo it from the Audit Trail.</>}
-            onConfirm={() => act(() => api.del(`/meeting-notes/${current.id}`), 'Notes deleted')} />)}>🗑</button>}
-          <button className="btn btn-primary btn-sm" disabled={busy || !dirty || (!text.trim() && !current)} onClick={save}>{busy ? 'Saving…' : !dirty && current ? '✓ Saved' : '💾 Save notes'}</button>
-        </div>
+        <RagPicker value={rag} onChange={setRag} />
+        <button className="btn btn-primary btn-sm" disabled={busy || !text.trim()} onClick={save}>{busy ? 'Saving…' : '💾 Save note'}</button>
       </div>
-      {current && <Comments note={current} />}
     </div>
   );
 }
 
-/** Notes from earlier sessions, newest first: the latest is shown, the rest on demand. */
-function History({ e, notes, expanded }: { e: Engagement; notes: MeetingNote[]; expanded?: boolean }) {
+function RagPicker({ value, onChange }: { value: MeetingRag; onChange: (r: MeetingRag) => void }) {
+  return (
+    <div className="mtg-seg">
+      {(Object.keys(RAG) as MeetingRag[]).map((r) => (
+        <button key={r} type="button" className={value === r ? 'on' : ''} style={value === r ? { background: RAG[r].color, borderColor: RAG[r].color } : undefined} onClick={() => onChange(r)}>{RAG[r].label}</button>
+      ))}
+    </div>
+  );
+}
+
+/** Every note for this engagement, newest first, each with edit / delete / comments. */
+function History({ e, notes, expanded, session }: { e: Engagement; notes: MeetingNote[]; expanded?: boolean; session: string }) {
   const { model: m } = useWorkspace();
   const toast = useToast();
   const [all, setAll] = useState(!!expanded);
-  const shown = all ? notes : notes.slice(0, 1);
+  const SHOW = 3;
+  const shown = all ? notes : notes.slice(0, SHOW);
   const exportCsv = () => {
     const rows = [...notes].reverse().map((n) => ({
       date: n.date, status: RAG[n.rag].label, notes: noteText(n).map((p) => (p.label ? `${p.label}: ` : '') + p.text).join('\n'),
@@ -601,7 +598,7 @@ function History({ e, notes, expanded }: { e: Engagement; notes: MeetingNote[]; 
       comments: n.comments.map((c) => `${c.by}: ${c.text}`).join(' | '), written_by: n.createdBy,
     }));
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob(['﻿' + toCsv(rows, ['date', 'status', 'notes', 'actions', 'comments', 'written_by'])], { type: 'text/csv;charset=utf-8' }));
+    a.href = URL.createObjectURL(new Blob(['\uFEFF' + toCsv(rows, ['date', 'status', 'notes', 'actions', 'comments', 'written_by'])], { type: 'text/csv;charset=utf-8' }));
     a.download = `${e.name.replace(/[\\/:*?"<>|]+/g, ' ').trim()} - meeting notes.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
@@ -609,34 +606,77 @@ function History({ e, notes, expanded }: { e: Engagement; notes: MeetingNote[]; 
   };
   return (
     <div className="mtg-note-col mtg-history">
-      <div className="mtg-label">🗂 Previous sessions {notes.length > 0 && <span className="muted">· {notes.length}</span>}
+      <div className="mtg-label">🗂 Notes {notes.length > 0 && <span className="muted">· {notes.length}</span>}
         {notes.length > 0 && <button className="mtg-link-btn" onClick={exportCsv}>⬇ Download</button>}
       </div>
       {notes.length ? (
         <>
-          <div className="mtg-timeline">{shown.map((n) => <NoteItem key={n.id} note={n} withComments />)}</div>
-          {notes.length > 1 && <button className="mtg-link-btn" onClick={() => setAll(!all)}>{all ? '▴ Show only the latest' : `▾ Show all ${notes.length} sessions`}</button>}
+          <div className="mtg-timeline">{shown.map((n) => <NoteItem key={n.id} note={n} e={e} isSession={n.date === session} />)}</div>
+          {notes.length > SHOW && <button className="mtg-link-btn" onClick={() => setAll(!all)}>{all ? '▴ Show fewer' : `▾ Show all ${notes.length} notes`}</button>}
         </>
-      ) : <div className="small muted">No earlier sessions yet — notes saved today will show here at the next session.</div>}
+      ) : <div className="small muted">No notes yet — notes you save appear here.</div>}
     </div>
   );
 }
 
-function NoteItem({ note, withComments }: { note: MeetingNote; withComments?: boolean }) {
-  const { model: m } = useWorkspace();
+function NoteItem({ note, e, isSession }: { note: MeetingNote; e: Engagement; isSession?: boolean }) {
+  const { model: m, canEdit, act } = useWorkspace();
+  const modal = useModal();
   const [open, setOpen] = useState(false);
-  const rag = RAG[note.rag];
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(note.notes);
+  const [rag, setRagState] = useState<MeetingRag>(note.rag);
+  const [date, setDate] = useState(note.date);
+  const [busy, setBusy] = useState(false);
+  const r = RAG[note.rag];
+  const startEdit = () => { setText(note.notes || noteText(note).map((p) => (p.label ? `${p.label}: ` : '') + p.text).join('\n')); setRagState(note.rag); setDate(note.date); setEditing(true); };
+  const save = async () => {
+    setBusy(true);
+    const legacy = !note.notes && (note.whereWeAre || note.challenges || note.nextSteps);
+    const ok = await act(() => api.patch(`/meeting-notes/${note.id}`, { notes: text, rag, date, ...(legacy ? { whereWeAre: '', challenges: '', nextSteps: '' } : {}) }), 'Note updated');
+    setBusy(false);
+    if (ok) setEditing(false);
+  };
+  const remove = () => modal.open(<Confirm title="Delete this note?" danger confirmLabel="🗑 Delete"
+    message={<>Delete the {fmtDate(note.date)} note for <b>{e.name}</b>{note.comments.length ? `, with its ${note.comments.length} comment${note.comments.length > 1 ? 's' : ''}` : ''}? You can undo it from the Audit Trail.</>}
+    onConfirm={() => act(() => api.del(`/meeting-notes/${note.id}`), 'Note deleted')} />);
   return (
-    <div className="mtg-note" style={{ ['--rag' as string]: rag.color }}>
-      <div className="mtg-note-head"><b>{fmtDate(note.date)}</b><span style={{ color: rag.color }}>{rag.icon} {rag.label}</span><span className="muted">by {note.createdBy}</span></div>
-      {noteText(note).map((p, i) => <div key={i} className="mtg-note-text">{p.label && <b>{p.label}: </b>}{p.text}</div>)}
-      {note.actions.length > 0 && (
-        <ul className="mtg-note-actions-list">
-          {note.actions.map((a) => <li key={a.id} className={a.done ? 'done' : ''}>{a.done ? '☑' : '☐'} {a.task}{a.ownerId && <span className="muted"> — {m.name(a.ownerId)}</span>}{a.due && <span className="muted"> · {fmtDate(a.due, { day: '2-digit', month: 'short' })}</span>}</li>)}
-        </ul>
+    <div className={'mtg-note' + (isSession ? ' this-session' : '')} style={{ ['--rag' as string]: (editing ? RAG[rag] : r).color }}>
+      <div className="mtg-note-head">
+        <b>{fmtDate(note.date)}</b>{isSession && <span className="mtg-today-tag">This session</span>}
+        <span style={{ color: r.color }}>{r.icon} {r.label}</span>
+        <span className="muted" title={note.editedAt ? `Edited by ${note.editedBy} on ${fmtDate(note.editedAt)}` : undefined}>by {note.createdBy}{note.editedAt ? ` · edited${note.editedBy && note.editedBy !== note.createdBy ? ' by ' + note.editedBy : ''}` : ''}</span>
+        {canEdit && !editing && (
+          <span className="mtg-note-tools">
+            <button type="button" title="Edit this note" onClick={startEdit}>✏️ Edit</button>
+            <button type="button" title="Delete this note" className="danger" onClick={remove}>🗑 Delete</button>
+          </span>
+        )}
+      </div>
+      {editing ? (
+        <div className="mtg-note-edit">
+          <textarea className="mtg-textarea" rows={4} value={text} onChange={(x) => setText(x.target.value)} autoFocus />
+          <div className="mtg-note-actions">
+            <RagPicker value={rag} onChange={setRagState} />
+            <input type="date" className="mtg-date" value={date} onChange={(x) => x.target.value && setDate(x.target.value)} title="Session date" />
+            <div className="row" style={{ gap: 6, marginLeft: 'auto' }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>Cancel</button>
+              <button className="btn btn-primary btn-sm" disabled={busy || !text.trim()} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {noteText(note).map((p, i) => <div key={i} className="mtg-note-text">{p.label && <b>{p.label}: </b>}{p.text}</div>)}
+          {note.actions.length > 0 && (
+            <ul className="mtg-note-actions-list">
+              {note.actions.map((a) => <li key={a.id} className={a.done ? 'done' : ''}>{a.done ? '☑' : '☐'} {a.task}{a.ownerId && <span className="muted"> — {m.name(a.ownerId)}</span>}{a.due && <span className="muted"> · {fmtDate(a.due, { day: '2-digit', month: 'short' })}</span>}</li>)}
+            </ul>
+          )}
+        </>
       )}
-      {withComments && <button className="mtg-link-btn" onClick={() => setOpen(!open)}>💬 {note.comments.length ? `${note.comments.length} comment${note.comments.length > 1 ? 's' : ''}` : 'Comment'}</button>}
-      {withComments && open && <Comments note={note} />}
+      <button className="mtg-link-btn" onClick={() => setOpen(!open)}>💬 {note.comments.length ? `${note.comments.length} comment${note.comments.length > 1 ? 's' : ''}` : 'Comment'}</button>
+      {open && <Comments note={note} />}
     </div>
   );
 }
