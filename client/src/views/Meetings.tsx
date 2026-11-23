@@ -3,7 +3,7 @@
    notes from earlier sessions. The meeting questions are shown once, at the top, as a reference. */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { progressFor, scopeStages, stageLabel, toCsv } from '../../../shared/schedule';
+import { progressFor, scopeStages, stageLabel, toCsv, toDay, type ScheduleInfo } from '../../../shared/schedule';
 import type { Engagement, MeetingNote, MeetingRag, Milestone, MilestoneStatus } from '../../../shared/types';
 import type { Model } from '../../../shared/engine';
 import { Donut } from '../components/charts';
@@ -112,20 +112,62 @@ function MiniStat({ value, label, color, children }: { value: ReactNode; label: 
   );
 }
 
+/** The CPS time frame, drawn automatically once a CPS is uploaded: each stage on its dates
+    (parallel stages on their own lane), a "today" line, and how much time is left. */
+function TimeFrame({ info, children }: { info: ScheduleInfo; children?: ReactNode }) {
+  const t = Date.parse(today());
+  const cpsStart = Math.min(...info.cps.map((c) => c.start.getTime()));
+  const cpsEnd = info.end!.getTime();
+  const min = Math.min(cpsStart, t);
+  const max = Math.max(cpsEnd, t);
+  const elapsed = Math.round(Math.min(100, Math.max(0, ((t - cpsStart) / Math.max(1, cpsEnd - cpsStart)) * 100)));
+  const pos = (ms: number) => ((ms - min) / Math.max(1, max - min)) * 100;
+  const lanes: number[] = [];
+  const placed = [...info.cps].sort((a, b) => a.start.getTime() - b.start.getTime()).map((c) => {
+    let lane = lanes.findIndex((endAt) => endAt < c.start.getTime());
+    if (lane < 0) { lane = lanes.length; lanes.push(0); }
+    lanes[lane] = c.end.getTime();
+    return { c, lane, state: c.end.getTime() < t ? 'done' : c.start.getTime() <= t ? 'now' : 'next' };
+  });
+  const now = placed.filter((x) => x.state === 'now').map((x) => x.c.label);
+  const left = info.daysLeft;
+  return (
+    <div className="mtg-tf">
+      <div className="mtg-tf-head">
+        <span className="mtg-label">📤 Time frame · from the uploaded CPS</span>
+        <span className="mtg-tf-left" style={{ color: left !== null && left < 0 ? 'var(--danger)' : left !== null && left <= 14 ? '#F0A54A' : 'var(--lavender)' }}>
+          {left === null ? '' : left < 0 ? `${-left} days past the CPS end` : `${left} days left`} · {elapsed}% of the CPS time elapsed
+        </span>
+      </div>
+      <div className="mtg-gantt" style={{ height: lanes.length * 24 + 4 }}>
+        {placed.map(({ c, lane, state }) => (
+          <div key={c.id + c.start.getTime()} className={'mtg-gantt-seg ' + state} title={`${c.label} · ${fmtDate(c.start)} → ${fmtDate(c.end)}`}
+            style={{ left: pos(c.start.getTime()) + '%', width: `max(6px, ${pos(c.end.getTime() + 86_400_000) - pos(c.start.getTime())}%)`, top: lane * 24 }}>
+            <span>{c.label}</span>
+          </div>
+        ))}
+        <div className="mtg-gantt-today" style={{ left: pos(t) + '%' }}><span>Today</span></div>
+      </div>
+      <div className="mtg-tf-foot"><span>{fmtDate(new Date(cpsStart))}</span><b>{now.length ? `Now: ${now.join(' · ')}` : placed.every((x) => x.state === 'done') ? 'All CPS stages complete' : 'Between stages'}</b><span>{fmtDate(info.end!)}</span></div>
+      {children}
+    </div>
+  );
+}
+
 /** Milestones placed on a line by date, with a "today" marker. */
-function MilestoneTrack({ list, onPick }: { list: Milestone[]; onPick?: (m: Milestone) => void }) {
+function MilestoneTrack({ list, onPick, bounds }: { list: Milestone[]; onPick?: (m: Milestone) => void; bounds?: [number, number] }) {
   const dated = list.filter((x) => x.date);
   if (!dated.length) return null;
   const t = today();
-  const times = [...dated.map((x) => Date.parse(x.date!)), Date.parse(t)];
+  const times = [...dated.map((x) => Date.parse(x.date!)), Date.parse(t), ...(bounds ?? [])];
   const min = Math.min(...times);
   const max = Math.max(...times);
-  const pos = (d: string) => (max === min ? 50 : 3 + ((Date.parse(d) - min) / (max - min)) * 94);
+  const pos = (d: string) => (max === min ? 50 : bounds ? ((Date.parse(d) - min) / (max - min)) * 100 : 3 + ((Date.parse(d) - min) / (max - min)) * 94);
   return (
     <div className="mtg-track">
       <div className="mtg-track-line" />
       <div className="mtg-track-fill" style={{ width: pos(t) + '%' }} />
-      <div className="mtg-today" style={{ left: pos(t) + '%' }}><span>Today</span></div>
+      {!bounds && <div className="mtg-today" style={{ left: pos(t) + '%' }}><span>Today</span></div>}
       {dated.map((x, i) => {
         const p = pos(x.date!);
         return (
@@ -146,7 +188,7 @@ export default function Meetings() {
   const [params] = useSearchParams();
   const [session, setSession] = useState(today());
   const [q, setQ] = useState('');
-  const [sort, setSort] = useState<'attention' | 'name' | 'lead'>('attention');
+  const [sort, setSort] = useState<'attention' | 'name' | 'lead' | 'sector'>('attention');
   const [scope, setScope] = useState<'active' | 'archive'>('active');
   const [status, setStatus] = useState<MeetingRag | 'none' | ''>('');
 
@@ -164,7 +206,8 @@ export default function Meetings() {
   useEffect(() => {
     setOrder([...list].sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name)
       : sort === 'lead' ? m.name(a.leadId).localeCompare(m.name(b.leadId)) || a.name.localeCompare(b.name)
-        : attention(a) - attention(b) || a.name.localeCompare(b.name))).map((e) => e.id));
+        : sort === 'sector' ? a.sector.localeCompare(b.sector) || a.name.localeCompare(b.name)
+          : attention(a) - attention(b) || a.name.localeCompare(b.name))).map((e) => e.id));
   }, [sort, scope, list.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const rank = new Map(order.map((id, i) => [id, i]));
   const sorted = [...rows].sort((a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999));
@@ -216,7 +259,7 @@ export default function Meetings() {
       <div className="filters-bar">
         <input type="text" placeholder="Search engagement, client or team member…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
-          <option value="attention">Needs attention first</option><option value="name">By name</option><option value="lead">By leader</option>
+          <option value="attention">Sort: needs attention first</option><option value="lead">Sort: engagement leader (A–Z)</option><option value="sector">Sort: sector (A–Z)</option><option value="name">Sort: engagement name (A–Z)</option>
         </select>
         <select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}>
           <option value="active">Active engagements ({active.length})</option><option value="archive">Archive: closed engagements with notes</option>
@@ -228,7 +271,17 @@ export default function Meetings() {
 
       {sorted.length ? (
         <div className="mtg-list">
-          {sorted.map((e) => <ProjectCard key={e.id} e={e} m={m} session={session} notes={notesFor(e.id)} milestones={milestonesFor(e.id)} canWrite={canEdit && m.bucket(e) === 'active'} />)}
+          {sorted.map((e, i) => {
+            const group = sort === 'lead' ? m.name(e.leadId) : sort === 'sector' ? e.sector : null;
+            const prev = i > 0 ? (sort === 'lead' ? m.name(sorted[i - 1].leadId) : sorted[i - 1].sector) : null;
+            const count = group === null ? 0 : sorted.filter((x) => (sort === 'lead' ? m.name(x.leadId) : x.sector) === group).length;
+            return (
+              <div key={e.id} className="mtg-list-item">
+                {group !== null && group !== prev && <div className="mtg-group">{sort === 'lead' ? '👑' : '🏢'} {group}<span>{count} engagement{count === 1 ? '' : 's'}</span></div>}
+                <ProjectCard e={e} m={m} session={session} notes={notesFor(e.id)} milestones={milestonesFor(e.id)} canWrite={canEdit && m.bucket(e) === 'active'} />
+              </div>
+            );
+          })}
         </div>
       ) : <Card><Empty>{scope === 'active' ? 'No active engagements match.' : 'No closed engagements have notes yet.'}</Empty></Card>}
     </>
@@ -246,8 +299,18 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite }: { e: Engage
   const earlier = notes.filter((n) => n !== current);
   const role = (pid: string) => (pid === e.leadId ? 'lead' : pid === e.supervisorId ? 'sup' : m.talentById.get(pid)?.department === 'Operations' ? 'ops' : 'member');
   const roleLabel = { lead: '👑 Leader', sup: '🧭 Supervisor', ops: '⚙️ Operations', member: '' };
-  const msDone = milestones.filter((x) => x.status === 'done').length;
-  const nextMs = milestones.filter((x) => x.status !== 'done' && x.date).sort((a, b) => a.date!.localeCompare(b.date!))[0];
+  // With a CPS uploaded, its stages are milestones too (status from their dates) — nothing to type in.
+  const info = m.schedule(e);
+  const cps = info?.cps.length ? info : null;
+  const t = today();
+  const autoMs: Milestone[] = (cps?.cps ?? []).map((c) => ({
+    id: 'cps-' + c.id, engagementId: e.id, title: c.label, date: toDay(c.end), createdAt: '', updatedAt: '',
+    status: toDay(c.end) < t ? 'done' : toDay(c.start) <= t ? 'in-progress' : 'planned',
+  }));
+  const allMs = [...autoMs, ...milestones];
+  const msDone = allMs.filter((x) => x.status === 'done').length;
+  const nextMs = allMs.filter((x) => x.status !== 'done' && x.date).sort((a, b) => a.date!.localeCompare(b.date!))[0];
+  const editMs = canEdit ? (x: Milestone) => modal.open(<MilestoneModal engagementId={e.id} milestone={x} />) : undefined;
   const nextIn = nextMs ? -daysSince(nextMs.date!) : null;
 
   return (
@@ -264,14 +327,23 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite }: { e: Engage
         </div>
       </div>
 
-      <JourneyBar e={e} />
+      {cps ? (
+        <TimeFrame info={cps}>
+          <MilestoneTrack list={milestones} onPick={editMs} bounds={[Math.min(...cps.cps.map((c) => c.start.getTime()), Date.parse(t)), Math.max(cps.end!.getTime(), Date.parse(t))]} />
+        </TimeFrame>
+      ) : (
+        <>
+          <JourneyBar e={e} />
+          <div className="mtg-tf-hint">{info?.end ? `Planned end ${fmtDate(info.end)} · ${info.daysLeft! < 0 ? `${-info.daysLeft!} days past` : `${info.daysLeft} days left`} — ` : ''}No CPS uploaded yet: once a CPS is attached to the engagement, its time frame appears here automatically.</div>
+        </>
+      )}
 
       <div className="mtg-minis">
         <MiniStat value={notes.length} label={notes.length === 1 ? 'session' : 'sessions'} />
         <MiniStat value={last ? (daysSince(last.date) <= 0 ? 'Today' : `${daysSince(last.date)}d`) : '—'} label="since last update"
           color={!last ? 'var(--text-faint)' : daysSince(last.date) > STALE_DAYS ? '#F0A54A' : 'var(--ok)'} />
-        <MiniStat value={`${msDone}/${milestones.length}`} label="milestones done">
-          <div className="mtg-mini-bar"><div style={{ width: (milestones.length ? (msDone / milestones.length) * 100 : 0) + '%' }} /></div>
+        <MiniStat value={`${msDone}/${allMs.length}`} label={cps ? 'milestones done (incl. CPS)' : 'milestones done'}>
+          <div className="mtg-mini-bar"><div style={{ width: (allMs.length ? (msDone / allMs.length) * 100 : 0) + '%' }} /></div>
         </MiniStat>
         <MiniStat value={nextMs ? (nextIn! < 0 ? `${-nextIn!}d late` : nextIn === 0 ? 'Today' : `in ${nextIn}d`) : '—'} label={nextMs ? `next: ${nextMs.title}` : 'no upcoming milestone'}
           color={nextMs ? (nextIn! < 0 ? 'var(--danger)' : nextIn! <= 7 ? '#F0A54A' : 'var(--lavender)') : 'var(--text-faint)'} />
@@ -294,7 +366,7 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite }: { e: Engage
         })}
       </div>
 
-      <MilestoneTrack list={milestones} onPick={canEdit ? (x) => modal.open(<MilestoneModal engagementId={e.id} milestone={x} />) : undefined} />
+      {!cps && <MilestoneTrack list={milestones} onPick={editMs} />}
       <div className="mtg-milestones">
         <span className="mtg-label">🏁 Key milestones</span>
         {milestones.some((x) => x.date) && (Object.keys(MS) as MilestoneStatus[]).map((k) => <span key={k} className="mtg-ms-legend"><i style={{ background: MS[k].color }} />{MS[k].label}</span>)}
