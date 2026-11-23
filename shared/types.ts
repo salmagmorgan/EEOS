@@ -153,6 +153,9 @@ export interface MeetingNote {
   rag: MeetingRag;
   /** Leader's own estimate of overall progress, 0-100 (null = not given). */
   progress: number | null;
+  /** The session's notes for this engagement (free text; the meeting questions are the guide). */
+  notes: string;
+  /** Structured answers (optional; kept for notes written that way). */
   whereWeAre: string;
   challenges: string;
   nextSteps: string;

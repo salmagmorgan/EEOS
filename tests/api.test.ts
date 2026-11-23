@@ -212,10 +212,10 @@ describe.each([
     await admin.patch(`/api/milestones/${ms.id}`).set(H).send({ status: 'done' }).expect(200);
 
     const first = (await admin.post(`/api/engagements/${e.id}/meeting-notes`).set(H).send({
-      date: '2026-11-10', rag: 'at-risk', progress: 40, whereWeAre: '  Fieldwork underway  ', challenges: 'Client data late', nextSteps: 'Chase data',
+      date: '2026-11-10', rag: 'at-risk', progress: 40, notes: '  Data late; interviews next week  ', whereWeAre: '  Fieldwork underway  ', challenges: 'Client data late', nextSteps: 'Chase data',
       actions: [{ task: 'Send data request', ownerId: e.leadId, due: '2026-11-12' }, { task: 'Book interviews', ownerId: null, due: '' }],
     }).expect(200)).body.note;
-    expect(first).toMatchObject({ engagementId: e.id, rag: 'at-risk', progress: 40, whereWeAre: 'Fieldwork underway', createdBy: 'Ada Admin', comments: [] });
+    expect(first).toMatchObject({ engagementId: e.id, rag: 'at-risk', progress: 40, notes: 'Data late; interviews next week', whereWeAre: 'Fieldwork underway', createdBy: 'Ada Admin', comments: [] });
     expect(first.actions).toHaveLength(2);
     expect(first.actions[1]).toMatchObject({ due: null, done: false });
 
@@ -226,8 +226,8 @@ describe.each([
     await viewer.post(`/api/meeting-notes/${first.id}/comments`).set(H).send({ text: 'x' }).expect(403);
 
     const second = (await admin.post(`/api/engagements/${e.id}/meeting-notes`).set(H).send({ date: '2026-11-17', rag: 'on-track', whereWeAre: 'Back on track' }).expect(200)).body.note;
-    const edited = (await admin.patch(`/api/meeting-notes/${second.id}`).set(H).send({ nextSteps: 'Draft report' }).expect(200)).body.note;
-    expect(edited).toMatchObject({ whereWeAre: 'Back on track', nextSteps: 'Draft report', rag: 'on-track' });
+    const edited = (await admin.patch(`/api/meeting-notes/${second.id}`).set(H).send({ nextSteps: 'Draft report', notes: 'Analysis started', rag: 'at-risk' }).expect(200)).body.note;
+    expect(edited).toMatchObject({ whereWeAre: 'Back on track', nextSteps: 'Draft report', notes: 'Analysis started', rag: 'at-risk' });
 
     const after = (await admin.get('/api/workspace').expect(200)).body;
     expect(after.meetingNotes.map((n: { date: string }) => n.date)).toEqual(['2026-11-10', '2026-11-17']);

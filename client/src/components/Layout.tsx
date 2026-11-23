@@ -8,13 +8,13 @@ import { Avatar, useModal } from './ui';
 export const NAV: { group?: string; items: { to: string; label: string; title: string; primary?: boolean }[] }[] = [
   { items: [
     { to: '/', label: '▦ Executive Dashboard', title: 'Command Center', primary: true },
+    { to: '/engagements/meeting', label: '🗓 Engagement Updates Meeting', title: 'Engagement Updates Meeting', primary: true },
     { to: '/copilot', label: '✨ AI Copilot', title: 'AI Copilot', primary: true },
   ] },
   { group: 'Engagements', items: [
     { to: '/engagements/new', label: '➕ New Engagement', title: 'New Engagement' },
     { to: '/engagements/lifecycle', label: 'Engagement Lifecycle', title: 'Lifecycle' },
     { to: '/engagements/status', label: 'Engagement Status', title: 'Status Overview' },
-    { to: '/engagements/meeting', label: 'Engagement Updates Meeting', title: 'Engagement Updates Meeting' },
     { to: '/engagements/profitability', label: 'Engagement Profitability', title: 'Profitability' },
     { to: '/engagements/trajectory', label: 'Engagement Trajectory', title: 'Engagement Trajectory' },
     { to: '/engagements/suggestions', label: 'Engagement Suggestions', title: 'Team Suggestions' },

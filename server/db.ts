@@ -381,7 +381,7 @@ export const trajectoryFromRow = (r: Row): TrajectoryRow => ({
 export type EntityType = 'talent' | 'engagement' | 'client' | 'capacityRule' | 'meetingNote' | 'milestone';
 export type Entity = Talent | Engagement | Client | CapacityRule | MeetingNote | Milestone;
 const docFromRow = <T>(r: Row): T => JSON.parse(r.data) as T;
-export const meetingNoteFromRow = (r: Row): MeetingNote => docFromRow<MeetingNote>(r);
+export const meetingNoteFromRow = (r: Row): MeetingNote => { const n = docFromRow<MeetingNote>(r); return { ...n, notes: n.notes ?? '' }; };
 export const milestoneFromRow = (r: Row): Milestone => docFromRow<Milestone>(r);
 
 export async function getEntity(ex: Exec, type: EntityType, id: string): Promise<Entity | null> {

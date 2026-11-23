@@ -24,6 +24,7 @@ const noteInput = z.object({
   date: day,
   rag: z.enum(['on-track', 'at-risk', 'off-track']),
   progress: z.number().min(0).max(100).nullable().optional(),
+  notes: text(10000).default(''),
   whereWeAre: text(5000).default(''),
   challenges: text(5000).default(''),
   nextSteps: text(5000).default(''),
@@ -69,7 +70,7 @@ export function meetingRoutes(db: DB): Router {
     return {
       note: await saveNote(user, e, id, 'Added meeting notes', () => ({
         id, engagementId: e.id, date: body.date, rag: body.rag, progress: body.progress ?? null,
-        whereWeAre: body.whereWeAre, challenges: body.challenges, nextSteps: body.nextSteps,
+        notes: body.notes, whereWeAre: body.whereWeAre, challenges: body.challenges, nextSteps: body.nextSteps,
         actions: cleanActions(body.actions), comments: [], createdBy: user.name, createdAt: now, updatedAt: now,
       })),
     };
