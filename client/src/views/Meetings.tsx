@@ -139,10 +139,10 @@ function TimeFrame({ info, children }: { info: ScheduleInfo; children?: ReactNod
           {left === null ? '' : left < 0 ? `${-left} days past the CPS end` : `${left} days left`} · {elapsed}% of the CPS time elapsed
         </span>
       </div>
-      <div className="mtg-gantt" style={{ height: lanes.length * 24 + 4 }}>
+      <div className="mtg-gantt" style={{ height: lanes.length * 16 + 2 }}>
         {placed.map(({ c, lane, state }) => (
           <div key={c.id + c.start.getTime()} className={'mtg-gantt-seg ' + state} title={`${c.label} · ${fmtDate(c.start)} → ${fmtDate(c.end)}`}
-            style={{ left: pos(c.start.getTime()) + '%', width: `max(6px, ${pos(c.end.getTime() + 86_400_000) - pos(c.start.getTime())}%)`, top: lane * 24 }}>
+            style={{ left: pos(c.start.getTime()) + '%', width: `max(6px, ${pos(c.end.getTime() + 86_400_000) - pos(c.start.getTime())}%)`, top: lane * 16 }}>
             <span>{c.label}</span>
           </div>
         ))}
@@ -185,7 +185,7 @@ function MilestoneTrack({ list, onPick, bounds }: { list: Milestone[]; onPick?: 
 export default function Meetings() {
   const { model: m, canEdit } = useWorkspace();
   const { notesFor, milestonesFor } = useMeetingData();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [session, setSession] = useState(today());
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<'attention' | 'name' | 'lead' | 'sector'>('attention');
@@ -212,9 +212,49 @@ export default function Meetings() {
   const rank = new Map(order.map((id, i) => [id, i]));
   const sorted = [...rows].sort((a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999));
 
-  // Open a specific engagement from a link (?e=<id>).
+  // A project's full view (?e=<id>); the main page lists all of them.
   const target = params.get('e');
-  useEffect(() => { if (target) document.getElementById('mtg-' + target)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, [target, order.length]);
+  const open = (id: string | null) => { setParams(id ? { e: id } : {}); window.scrollTo({ top: 0 }); };
+  const [returnTo, setReturnTo] = useState<string | null>(null);
+  useEffect(() => {
+    if (!target && returnTo) { document.getElementById('mtg-row-' + returnTo)?.scrollIntoView({ block: 'center' }); setReturnTo(null); }
+  }, [target]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The two boxes at the top can be folded (remembered on this device); on phones the questions start folded.
+  const [fold, setFold] = useState<{ questions: boolean; status: boolean }>(() => {
+    try { const v = JSON.parse(localStorage.getItem('eeos.meetingFold') ?? 'null'); if (v) return v; } catch { /* private mode */ }
+    return { questions: window.innerWidth < 860, status: false };
+  });
+  const flip = (k: 'questions' | 'status') => setFold((f) => {
+    const next = { ...f, [k]: !f[k] };
+    try { localStorage.setItem('eeos.meetingFold', JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
+  const sessionPicker = <label className="mtg-session-pick">🗓 Session date <input type="date" value={session} max="2100-12-31" onChange={(x) => x.target.value && setSession(x.target.value)} /></label>;
+
+  if (target) {
+    const e = m.engagement(target);
+    if (!e || e.status === 'deleted') return <Card><Empty>That engagement can’t be found. <button className="btn btn-sm" onClick={() => open(null)}>← All engagements</button></Empty></Card>;
+    const nav = sorted.some((x) => x.id === e.id) ? sorted : [e];
+    const idx = nav.findIndex((x) => x.id === e.id);
+    return (
+      <>
+        <div className="mtg-detail-nav">
+          <button className="btn btn-sm" onClick={() => { setReturnTo(e.id); open(null); }}>← All engagements</button>
+          <div className="row" style={{ gap: 6 }}>
+            <button className="btn btn-sm" disabled={idx <= 0} onClick={() => open(nav[idx - 1].id)}>‹ Previous</button>
+            <span className="small muted">{idx + 1} of {nav.length}</span>
+            <button className="btn btn-sm btn-primary" disabled={idx >= nav.length - 1} onClick={() => open(nav[idx + 1].id)}>Next ›</button>
+          </div>
+          {sessionPicker}
+        </div>
+        <div className="mtg-qstrip">
+          <span className="mtg-label">Questions</span>
+          {MEETING_QUESTIONS.map((x) => <span key={x.q} className="mtg-qchip" title={x.hint}>{x.icon} {x.q}</span>)}
+        </div>
+        <ProjectCard e={e} m={m} session={session} notes={notesFor(e.id)} milestones={milestonesFor(e.id)} canWrite={canEdit && m.bucket(e) === 'active'} full />
+      </>
+    );
+  }
 
   const lasts = active.map((e) => notesFor(e.id)[0]);
   const thisSession = active.filter((e) => notesFor(e.id).some((n) => n.date === session)).length;
@@ -226,19 +266,30 @@ export default function Meetings() {
 
   return (
     <>
-      <PageHead title="Engagement Updates Meeting" desc="Every active engagement with its full team, key milestones and notes by session. Write each project’s notes in its own box; earlier sessions stay underneath.">
-        <label className="mtg-session-pick">🗓 Session date <input type="date" value={session} max="2100-12-31" onChange={(x) => x.target.value && setSession(x.target.value)} /></label>
+      <PageHead title="Engagement Updates Meeting" desc="All active engagements at a glance. Click an engagement to open its full view: team, time frame, milestones, this session’s notes and earlier sessions.">
+        {sessionPicker}
       </PageHead>
 
       <div className="mtg-top">
-        <div className="card mtg-questions">
-          <div className="mtg-questions-title">Questions to cover for each engagement</div>
-          <ol>
-            {MEETING_QUESTIONS.map((x) => <li key={x.q}><span className="mtg-qi">{x.icon}</span><div><b>{x.q}</b><small>{x.hint}</small></div></li>)}
-          </ol>
+        <div className={'card mtg-questions' + (fold.questions ? ' folded' : '')}>
+          <button type="button" className="mtg-fold-head" aria-expanded={!fold.questions} onClick={() => flip('questions')}>
+            <span className="mtg-questions-title">Questions to cover for each engagement</span><span className="mtg-fold-btn">{fold.questions ? '+ Show' : '− Hide'}</span>
+          </button>
+          {fold.questions ? (
+            <div className="mtg-q-mini">{MEETING_QUESTIONS.map((x) => <span key={x.q} title={x.q}>{x.icon}</span>)}</div>
+          ) : (
+            <ol>
+              {MEETING_QUESTIONS.map((x) => <li key={x.q}><span className="mtg-qi">{x.icon}</span><div><b>{x.q}</b><small>{x.hint}</small></div></li>)}
+            </ol>
+          )}
         </div>
-        <div className="card mtg-pulse-card">
-          <div className="mtg-pulse-title">Portfolio status from the latest notes <span className="muted">· click to filter</span></div>
+        <div className={'card mtg-pulse-card' + (fold.status ? ' folded' : '')}>
+          <button type="button" className="mtg-fold-head" aria-expanded={!fold.status} onClick={() => flip('status')}>
+            <span className="mtg-pulse-title">Portfolio status {!fold.status && <span className="muted">· click a colour to filter</span>}</span><span className="mtg-fold-btn">{fold.status ? '+ Show' : '− Hide'}</span>
+          </button>
+          {fold.status ? (
+            <div className="mtg-legend">{(['on-track', 'at-risk', 'off-track'] as MeetingRag[]).map((r) => <span key={r}><i style={{ background: RAG[r].color }} />{RAG[r].label} <b>{ragCount(r)}</b></span>)}<span><i style={{ background: 'var(--border)' }} />No notes <b>{noUpdate}</b></span><span>· Covered <b>{thisSession}/{active.length}</b></span></div>
+          ) : <>
           <Donut size={132} onPick={(k) => setStatus(status === k ? '' : (k as MeetingRag | 'none'))} buckets={[
             ...(['on-track', 'at-risk', 'off-track'] as MeetingRag[]).map((r) => ({ key: r, label: RAG[r].label, count: ragCount(r), color: RAG[r].color })),
             { key: 'none', label: 'No notes yet', count: noUpdate, color: '#3A4366' },
@@ -253,6 +304,7 @@ export default function Meetings() {
               <div><div className="mtg-pulse-title">Milestones overdue</div><div className="mtg-pulse-sub">{msSoon} due in the next 14 days</div></div>
             </div>
           </div>
+          </>}
         </div>
       </div>
 
@@ -270,7 +322,7 @@ export default function Meetings() {
       </div>
 
       {sorted.length ? (
-        <div className="mtg-list">
+        <div className="mtg-list compact">
           {sorted.map((e, i) => {
             const group = sort === 'lead' ? m.name(e.leadId) : sort === 'sector' ? e.sector : null;
             const prev = i > 0 ? (sort === 'lead' ? m.name(sorted[i - 1].leadId) : sorted[i - 1].sector) : null;
@@ -278,7 +330,7 @@ export default function Meetings() {
             return (
               <div key={e.id} className="mtg-list-item">
                 {group !== null && group !== prev && <div className="mtg-group">{sort === 'lead' ? '👑' : '🏢'} {group}<span>{count} engagement{count === 1 ? '' : 's'}</span></div>}
-                <ProjectCard e={e} m={m} session={session} notes={notesFor(e.id)} milestones={milestonesFor(e.id)} canWrite={canEdit && m.bucket(e) === 'active'} />
+                <ProjectRow e={e} m={m} session={session} notes={notesFor(e.id)} milestones={milestonesFor(e.id)} onOpen={() => open(e.id)} />
               </div>
             );
           })}
@@ -288,8 +340,95 @@ export default function Meetings() {
   );
 }
 
+/** CPS stages as milestones (status from their dates), so a CPS needs no typing. */
+function cpsMilestones(e: Engagement, info: ScheduleInfo | null): Milestone[] {
+  const t = today();
+  return (info?.cps ?? []).map((c) => ({
+    id: 'cps-' + c.id, engagementId: e.id, title: c.label, date: toDay(c.end), createdAt: '', updatedAt: '',
+    status: toDay(c.end) < t ? 'done' : toDay(c.start) <= t ? 'in-progress' : 'planned',
+  }));
+}
+
+/** A one-line time frame for the list: CPS stages on their dates, or the lifecycle stages. */
+function SlimTime({ e, info }: { e: Engagement; info: ScheduleInfo | null }) {
+  if (info?.cps.length) {
+    const t = Date.parse(today());
+    const a = Math.min(...info.cps.map((c) => c.start.getTime()));
+    const b = info.end!.getTime();
+    const min = Math.min(a, t);
+    const max = Math.max(b, t);
+    const pos = (ms: number) => ((ms - min) / Math.max(1, max - min)) * 100;
+    const left = Math.round((b - t) / 86_400_000);
+    return (
+      <div className="mtg-slim" title="Time frame from the uploaded CPS">
+        <div className="mtg-slim-bar">
+          {info.cps.map((c) => {
+            const st = c.end.getTime() < t ? 'done' : c.start.getTime() <= t ? 'now' : 'next';
+            return <i key={c.id + c.start.getTime()} className={st} style={{ left: pos(c.start.getTime()) + '%', width: `max(3px, ${pos(c.end.getTime() + 86_400_000) - pos(c.start.getTime())}%)` }} title={`${c.label} · ${fmtDate(c.start)} → ${fmtDate(c.end)}`} />;
+          })}
+          <b style={{ left: pos(t) + '%' }} />
+        </div>
+        <div className="mtg-slim-l"><span>📤 CPS</span><span style={{ color: left < 0 ? 'var(--danger)' : left <= 14 ? '#F0A54A' : undefined }}>{left < 0 ? `${-left}d past end` : `${left}d left`}</span></div>
+      </div>
+    );
+  }
+  const stages = scopeStages(e.scope);
+  const at = Math.max(0, stages.findIndex((x) => x.id === e.stage));
+  return (
+    <div className="mtg-slim" title="Lifecycle stage (no CPS uploaded)">
+      <div className="mtg-slim-steps">{stages.map((x, i) => <i key={x.id} className={i < at ? 'done' : i === at ? 'now' : ''} style={{ flex: x.weight }} />)}</div>
+      <div className="mtg-slim-l"><span>Stage {at + 1}/{stages.length}</span><span className="muted">No CPS</span></div>
+    </div>
+  );
+}
+
+/** One engagement in the overview list. Click → its full view. */
+function ProjectRow({ e, m, session, notes, milestones, onOpen }: { e: Engagement; m: Model; session: string; notes: MeetingNote[]; milestones: Milestone[]; onOpen: () => void }) {
+  const last = notes[0];
+  const rag = last ? RAG[last.rag] : null;
+  const info = m.schedule(e);
+  const staff = staffOf(e);
+  const others = staff.filter((x) => x !== e.leadId);
+  const all = [...cpsMilestones(e, info?.cps.length ? info : null), ...milestones];
+  const done = all.filter((x) => x.status === 'done').length;
+  const late = all.some((x) => x.status !== 'done' && x.date && x.date < today());
+  const covered = notes.some((n) => n.date === session);
+  const snippet = last ? noteText(last).map((p) => p.text).join(' · ').replace(/\s+/g, ' ') : '';
+  return (
+    <button type="button" id={'mtg-row-' + e.id} className="mtg-row" onClick={onOpen} style={{ ['--rag' as string]: rag?.color ?? 'var(--border)' }}>
+      <Ring pct={last?.progress ?? progressFor(e.scope, e.stage)} color={rag?.color ?? 'var(--accent)'} size={42} stroke={4} />
+      <div className="mtg-row-main">
+        <div className="mtg-row-name">{e.name}</div>
+        <div className="mtg-row-sub">{e.client} · {e.sector} · {stageLabel(e.stage)}</div>
+      </div>
+      <div className="mtg-row-team">
+        <div className="mtg-row-lead">👑 {m.name(e.leadId)}</div>
+        <div className="mtg-stack">
+          {others.slice(0, 6).map((id) => <span key={id} title={`${m.name(id)} · ${m.talentById.get(id)?.title ?? ''}`}><Avatar text={m.talentById.get(id)?.initials ?? '?'} size={22} /></span>)}
+          {others.length > 6 && <span className="mtg-stack-more">+{others.length - 6}</span>}
+          <span className="mtg-row-count">{staff.length} people</span>
+        </div>
+      </div>
+      <SlimTime e={e} info={info} />
+      <div className="mtg-row-ms">
+        <div className="mtg-row-msv" style={{ color: late ? 'var(--danger)' : undefined }}>{all.length ? `${done}/${all.length}` : '—'}</div>
+        <div className="mtg-row-msl">{late ? 'milestone late' : 'milestones'}</div>
+      </div>
+      <div className="mtg-row-status">
+        <span className="mtg-rag-pill" style={{ background: rag?.color ?? 'var(--border)' }}>{rag ? rag.label : 'No notes'}</span>
+        <StatusTrend notes={notes} />
+      </div>
+      <div className="mtg-row-last">
+        <div className="mtg-row-when">{covered ? <span style={{ color: 'var(--ok)' }}>✓ Notes this session</span> : last ? `Last notes ${fmtDate(last.date, { day: '2-digit', month: 'short' })}` : 'No notes yet'}</div>
+        {snippet && <div className="mtg-row-snip">{snippet}</div>}
+      </div>
+      <span className="mtg-row-go" aria-hidden="true">›</span>
+    </button>
+  );
+}
+
 // ---------- one engagement ----------
-function ProjectCard({ e, m, session, notes, milestones, canWrite }: { e: Engagement; m: Model; session: string; notes: MeetingNote[]; milestones: Milestone[]; canWrite: boolean }) {
+function ProjectCard({ e, m, session, notes, milestones, canWrite, full }: { e: Engagement; m: Model; session: string; notes: MeetingNote[]; milestones: Milestone[]; canWrite: boolean; full?: boolean }) {
   const { canEdit } = useWorkspace();
   const modal = useModal();
   const last = notes[0];
@@ -303,10 +442,7 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite }: { e: Engage
   const info = m.schedule(e);
   const cps = info?.cps.length ? info : null;
   const t = today();
-  const autoMs: Milestone[] = (cps?.cps ?? []).map((c) => ({
-    id: 'cps-' + c.id, engagementId: e.id, title: c.label, date: toDay(c.end), createdAt: '', updatedAt: '',
-    status: toDay(c.end) < t ? 'done' : toDay(c.start) <= t ? 'in-progress' : 'planned',
-  }));
+  const autoMs = cpsMilestones(e, cps);
   const allMs = [...autoMs, ...milestones];
   const msDone = allMs.filter((x) => x.status === 'done').length;
   const nextMs = allMs.filter((x) => x.status !== 'done' && x.date).sort((a, b) => a.date!.localeCompare(b.date!))[0];
@@ -385,7 +521,7 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite }: { e: Engage
           current ? <div className="mtg-note-col"><div className="mtg-label">This session · {fmtDate(session)}</div><NoteItem note={current} /></div>
             : <div className="mtg-note-col small muted">{canEdit ? 'This engagement isn’t active, so no new notes.' : 'No notes for this session yet.'}</div>
         )}
-        <History e={e} notes={earlier} />
+        <History e={e} notes={earlier} expanded={full} />
       </div>
     </div>
   );
@@ -428,10 +564,10 @@ function NoteBox({ e, session, current, suggestedRag }: { e: Engagement; session
 }
 
 /** Notes from earlier sessions, newest first: the latest is shown, the rest on demand. */
-function History({ e, notes }: { e: Engagement; notes: MeetingNote[] }) {
+function History({ e, notes, expanded }: { e: Engagement; notes: MeetingNote[]; expanded?: boolean }) {
   const { model: m } = useWorkspace();
   const toast = useToast();
-  const [all, setAll] = useState(false);
+  const [all, setAll] = useState(!!expanded);
   const shown = all ? notes : notes.slice(0, 1);
   const exportCsv = () => {
     const rows = [...notes].reverse().map((n) => ({

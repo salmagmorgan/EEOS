@@ -45,9 +45,23 @@ export const NAV: { group?: string; items: { to: string; label: string; title: s
   ] },
 ];
 
+const NAV_KEY = 'eeos.navCollapsed';
+function readCollapsed(): string[] {
+  try { return JSON.parse(localStorage.getItem(NAV_KEY) ?? '[]'); } catch { return []; }
+}
+
 function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }) {
   const { canEdit } = useWorkspace();
   const modal = useModal();
+  const loc = useLocation();
+  // Menu groups can be folded; the choice is remembered on this device.
+  const [collapsed, setCollapsed] = useState<string[]>(readCollapsed);
+  const toggle = (g: string) => setCollapsed((c) => {
+    const next = c.includes(g) ? c.filter((x) => x !== g) : [...c, g];
+    try { localStorage.setItem(NAV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  });
+  const allGroups = NAV.filter((g) => g.group).map((g) => g.group!);
   return (
     <aside className={'sidebar' + (open ? ' mobile-open' : '')}>
       <div className="brand">
@@ -56,21 +70,33 @@ function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }
         <div className="brand-tag">Insights . Strategy . Impact</div>
       </div>
       <nav className="nav-scroll">
-        {NAV.map((g, gi) => (
-          <div key={gi} className={g.group ? 'nav-group' : undefined}>
+        <div className="nav-fold-all">
+          <button type="button" onClick={() => { const next = collapsed.length < allGroups.length ? allGroups : []; setCollapsed(next); try { localStorage.setItem(NAV_KEY, JSON.stringify(next)); } catch { /* private mode */ } }}>
+            {collapsed.length < allGroups.length ? '▴ Collapse all' : '▾ Expand all'}
+          </button>
+        </div>
+        {NAV.map((g, gi) => {
+          const here = g.items.some((it) => it.to === loc.pathname);
+          const folded = !!g.group && collapsed.includes(g.group) && !here;
+          return (
+          <div key={gi} className={g.group ? 'nav-group' + (folded ? ' folded' : '') : undefined}>
             {g.group && (
-              <div className="nav-group-label">{g.group}
+              <div className="nav-group-label">
+                <button type="button" className="nav-group-toggle" aria-expanded={!folded} onClick={() => toggle(g.group!)}>
+                  <span className="nav-chev">{folded ? '▸' : '▾'}</span>{g.group}{folded && <span className="nav-count">{g.items.length}</span>}
+                </button>
                 {g.group === 'Talents' && canEdit && <button className="nav-add-btn" title="Add new talent" onClick={() => modal.open(<AddTalentModal />)}>+</button>}
               </div>
             )}
-            {g.items.map((it) => (
+            {!folded && g.items.map((it) => (
               <NavLink key={it.to} to={it.to} end onClick={onNavigate} className={({ isActive }) => (it.primary ? 'nav-primary' : 'nav-item') + (isActive ? ' active' : '')}
                 style={it.to === '/copilot' ? { background: 'linear-gradient(90deg, rgba(237,36,41,0.14), transparent)', borderColor: '#4A2130' } : undefined}>
                 {!it.primary && !it.label.startsWith('➕') && <span className="dot" />}{it.label}
               </NavLink>
             ))}
           </div>
-        ))}
+          );
+        })}
       </nav>
       <div className="sidebar-footer">© {new Date().getFullYear()} The Board Consulting</div>
     </aside>
