@@ -733,3 +733,26 @@ button.mtg-member:hover{border-color:var(--accent);transform:translateY(-1px);}
 .mtg-recap-n{font-size:11px;color:var(--ok);white-space:nowrap;}
 .mtg-recap-n.none{color:var(--text-faint);}
 @media (max-width: 860px){ .mtg-head-tools{width:100%;} }
+
+/* Recap: options + live preview */
+.recap-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:18px;align-items:start;}
+.recap-options .mtg-recap-list{max-height:330px;}
+.recap-dates{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
+.recap-dates .mtg-qchip{cursor:pointer;font:inherit;font-size:11px;color:var(--text);}
+.recap-dates .mtg-qchip.on{background:var(--accent);border-color:var(--accent);}
+.recap-preview-wrap{position:sticky;top:0;display:flex;flex-direction:column;gap:6px;}
+.recap-preview-head{display:flex;justify-content:space-between;font-size:11px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;}
+.recap-preview{background:#3A3F57;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow:auto;transition:opacity .2s;}
+.recap-preview.busy{opacity:.55;}
+.recap-preview .recap-page{display:block;background:#fff;border-radius:2px;box-shadow:0 6px 20px rgba(0,0,0,.4);}
+.recap-preview-empty{color:#D4D7E6;font-size:12px;padding:40px 10px;text-align:center;}
+.export-report{display:flex;align-items:center;gap:14px;padding:14px 16px;margin-bottom:16px;border-radius:14px;background:linear-gradient(90deg,var(--accent-glow),var(--panel) 55%);border:1px solid var(--accent-dim);cursor:pointer;transition:border-color .15s,transform .15s;}
+.export-report:hover{border-color:var(--accent);transform:translateY(-1px);}
+.export-report-icon{flex-shrink:0;}
+.export-report-go{color:var(--accent);font-weight:600;font-size:12.5px;white-space:nowrap;}
+@media (max-width: 860px){
+  .recap-layout{grid-template-columns:minmax(0,1fr);}
+  .recap-preview-wrap{position:static;}
+  .recap-preview{max-height:none;}
+  .export-report{flex-wrap:wrap;}
+}

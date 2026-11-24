@@ -54,6 +54,20 @@ export function workspaceRoutes(db: DB, opts: { demoSeedPath: string }): Router 
       case 'clients':
         csv = toCsv(m.clients(), ['name', 'industry', 'country', 'active', 'historical', 'owner']);
         break;
+      case 'meeting-notes': {
+        const w = await readWorkspace(db);
+        const notes = [...(w.meetingNotes ?? [])].sort((a, b) => b.date.localeCompare(a.date) || a.engagementId.localeCompare(b.engagementId));
+        const status = { 'on-track': 'On track', 'at-risk': 'At risk', 'off-track': 'Off track' } as const;
+        csv = toCsv(notes.map((n) => {
+          const e = m.engagement(n.engagementId);
+          return {
+            date: n.date, engagement: e?.name ?? '', client: e?.client ?? '', leader: e ? m.name(e.leadId) : '', status: status[n.rag],
+            notes: [n.notes, n.whereWeAre && `Where we are: ${n.whereWeAre}`, n.challenges && `Challenges: ${n.challenges}`, n.nextSteps && `Next steps: ${n.nextSteps}`].filter(Boolean).join('\n'),
+            comments: n.comments.map((c) => `${c.by}: ${c.text}`).join(' | '), written_by: n.createdBy, edited_by: n.editedBy ?? '',
+          };
+        }), ['date', 'engagement', 'client', 'leader', 'status', 'notes', 'comments', 'written_by', 'edited_by']);
+        break;
+      }
       case 'trajectory':
         csv = toCsv(m.data.trajectory, ['year', 'month', 'engagement', 'client', 'sector', 'scope', 'status', 'talent', 'title', 'role']);
         break;

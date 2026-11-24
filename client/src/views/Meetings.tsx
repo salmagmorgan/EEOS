@@ -1,7 +1,7 @@
 /* Engagement Updates Meeting — one list of the engagements (like Engagement Status), where every
    project shows its full team, its key milestones, its own notes box for today's session, and the
    notes from earlier sessions. The meeting questions are shown once, at the top, as a reference. */
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { progressFor, scopeStages, stageLabel, toCsv, toDay, type ScheduleInfo } from '../../../shared/schedule';
 import type { Engagement, MeetingNote, MeetingRag, Milestone, MilestoneStatus } from '../../../shared/types';
@@ -10,7 +10,8 @@ import { Donut } from '../components/charts';
 import { ClientModal, EngagementModal, TalentModal } from '../components/modals';
 import { Avatar, Card, Confirm, Empty, ModalFrame, PageHead, fmtDate, useModal, useToast } from '../components/ui';
 import { api } from '../lib/api';
-import { buildRecapPdf, recapFileName } from '../lib/recapPdf';
+import { noteText, staffOf, useMeetingData } from '../lib/meetings';
+import { NotesReportIcon, RecapModal } from '../components/RecapModal';
 import { useWorkspace } from '../lib/workspace';
 
 export const RAG: Record<MeetingRag, { label: string; color: string; icon: string }> = {
@@ -34,20 +35,7 @@ export const MEETING_QUESTIONS = [
 const today = () => new Date().toISOString().slice(0, 10);
 const daysSince = (d: string) => Math.floor((Date.parse(today()) - Date.parse(d)) / 86_400_000);
 const STALE_DAYS = 14;
-const staffOf = (e: Engagement) => [...new Set([e.leadId, ...(e.supervisorId ? [e.supervisorId] : []), ...e.teamIds])];
 
-function useMeetingData() {
-  const { data } = useWorkspace();
-  return useMemo(() => {
-    const notes = new Map<string, MeetingNote[]>();
-    for (const n of data.meetingNotes ?? []) (notes.get(n.engagementId) ?? notes.set(n.engagementId, []).get(n.engagementId)!).push(n);
-    for (const list of notes.values()) list.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
-    const milestones = new Map<string, Milestone[]>();
-    for (const m of data.milestones ?? []) (milestones.get(m.engagementId) ?? milestones.set(m.engagementId, []).get(m.engagementId)!).push(m);
-    for (const list of milestones.values()) list.sort((a, b) => (a.date ?? '9999').localeCompare(b.date ?? '9999') || a.createdAt.localeCompare(b.createdAt));
-    return { notesFor: (id: string) => notes.get(id) ?? [], milestonesFor: (id: string) => milestones.get(id) ?? [] };
-  }, [data.meetingNotes, data.milestones]);
-}
 
 function Ring({ pct, color, size = 48, stroke = 5, children }: { pct: number; color: string; size?: number; stroke?: number; children?: ReactNode }) {
   const r = (size - stroke) / 2;
@@ -64,15 +52,6 @@ function Ring({ pct, color, size = 48, stroke = 5, children }: { pct: number; co
   );
 }
 
-/** A note's text: the free-text notes, plus any structured answers it was written with. */
-function noteText(n: MeetingNote): { label?: string; text: string }[] {
-  const parts: { label?: string; text: string }[] = [];
-  if (n.notes) parts.push({ text: n.notes });
-  if (n.whereWeAre) parts.push({ label: '📍 Where are we now', text: n.whereWeAre });
-  if (n.challenges) parts.push({ label: '⚠️ Challenges', text: n.challenges });
-  if (n.nextSteps) parts.push({ label: '➡️ Next steps', text: n.nextSteps });
-  return parts;
-}
 
 // ---------- visuals ----------
 /** The engagement's lifecycle as a segmented bar: done, current, still to come. */
@@ -239,8 +218,8 @@ export default function Meetings() {
     return next;
   });
   const recapBtn = (only?: string) => (
-    <button className="btn btn-sm mtg-recap-btn" title="Download a one-page TBC-branded PDF of this session's notes"
-      onClick={() => modal.open(<RecapModal session={session} only={only} notesFor={notesFor} order={sorted.map((x) => x.id)} />)}>📄 Recap PDF</button>
+    <button className="btn btn-sm mtg-recap-btn" title="Preview and export a one-page TBC-branded PDF of this session's notes"
+      onClick={() => modal.open(<RecapModal session={session} only={only} notesFor={notesFor} order={sorted.map((x) => x.id)} />)}><NotesReportIcon /> Notes report</button>
   );
   const sessionPicker = <label className="mtg-session-pick">🗓 Session date <input type="date" value={session} max="2100-12-31" onChange={(x) => x.target.value && setSession(x.target.value)} /></label>;
 
@@ -734,103 +713,3 @@ function MilestoneModal({ engagementId, milestone }: { engagementId: string; mil
   );
 }
 
-/** Choose the session and engagements, then download (or share) the branded one-page recap PDF. */
-function RecapModal({ session, only, notesFor, order }: { session: string; only?: string; notesFor: (id: string) => MeetingNote[]; order: string[] }) {
-  const { model: m, user } = useWorkspace();
-  const toast = useToast();
-  const [date, setDate] = useState(session);
-  const candidates = useMemo(() => {
-    const ids = new Set([...m.engagements.filter((e) => m.bucket(e) === 'active').map((e) => e.id), ...m.engagements.filter((e) => notesFor(e.id).some((n) => n.date === date)).map((e) => e.id)]);
-    const rank = new Map(order.map((id, i) => [id, i]));
-    const has = (id: string) => (notesFor(id).some((n) => n.date === date) ? 0 : 1);
-    return [...ids].map((id) => m.engagement(id)!).filter(Boolean).sort((a, b) => has(a.id) - has(b.id) || (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999) || a.name.localeCompare(b.name));
-  }, [m, date, order]); // eslint-disable-line react-hooks/exhaustive-deps
-  const withNotes = (id: string) => notesFor(id).some((n) => n.date === date);
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(only ? [only] : candidates.filter((e) => withNotes(e.id)).map((e) => e.id)));
-  useEffect(() => { if (!only) setPicked(new Set(candidates.filter((e) => withNotes(e.id)).map((e) => e.id))); }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [comments, setComments] = useState(true);
-  const [team, setTeam] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  const toggle = (id: string) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const chosen = candidates.filter((e) => picked.has(e.id));
-
-  const make = async (): Promise<File | null> => {
-    setBusy(true);
-    try {
-      const items = chosen.map((e) => {
-        const day = notesFor(e.id).filter((n) => n.date === date).reverse(); // oldest first, as written
-        return {
-          name: e.name, client: e.client, leader: m.name(e.leadId), stage: stageLabel(e.stage),
-          team: staffOf(e).filter((x) => x !== e.leadId).map((x) => m.name(x)),
-          rag: day.length ? day[day.length - 1].rag : null,
-          notes: day.map((n) => ({ text: noteText(n).map((p) => (p.label ? `${p.label.replace(/^\S+\s/, '')}: ` : '') + p.text).join('\n'), by: n.createdBy, rag: n.rag })),
-          comments: comments ? day.flatMap((n) => n.comments.map((c) => ({ by: c.by, text: c.text }))) : [],
-        };
-      });
-      const blob = await buildRecapPdf({ date, preparedBy: user.name, items, showTeam: team });
-      const f = new File([blob], recapFileName(date), { type: 'application/pdf' });
-      setFile(f);
-      return f;
-    } catch (err) {
-      toast('Could not create the PDF: ' + (err as Error).message, 'error');
-      return null;
-    } finally {
-      setBusy(false);
-    }
-  };
-  const download = async () => {
-    const f = file ?? (await make());
-    if (!f) return;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(f);
-    a.download = f.name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 20_000);
-    toast('Recap PDF downloaded');
-  };
-  const canShare = typeof navigator !== 'undefined' && 'canShare' in navigator;
-  const share = async () => {
-    const f = file ?? (await make());
-    if (!f) return;
-    try {
-      if (navigator.canShare?.({ files: [f] })) await navigator.share({ files: [f], title: 'Engagement Meeting Updates Recap' });
-      else await download();
-    } catch { /* the person closed the share sheet */ }
-  };
-  useEffect(() => setFile(null), [date, picked, comments, team]);
-
-  return (
-    <ModalFrame title="📄 Engagement Meeting Updates Recap" footer={<>
-      {canShare && <button className="btn btn-sm" disabled={busy || !chosen.length} onClick={share}>📤 Share</button>}
-      <button className="btn btn-primary btn-sm" disabled={busy || !chosen.length} onClick={download}>{busy ? 'Preparing…' : '⬇ Download PDF'}</button>
-    </>}>
-      <div className="small muted" style={{ marginBottom: 12, lineHeight: 1.5 }}>A one-page PDF in TBC branding: the session date, the title in the middle, and each engagement with the notes written for that session — ready to share.</div>
-      <div className="form-grid">
-        <div className="form-field"><label>Session date</label><input type="date" value={date} onChange={(x) => x.target.value && setDate(x.target.value)} /></div>
-        <div className="form-field"><label>Include</label>
-          <label className="mtg-check"><input type="checkbox" checked={comments} onChange={(x) => setComments(x.target.checked)} /> Comments on the notes</label>
-          <label className="mtg-check"><input type="checkbox" checked={team} onChange={(x) => setTeam(x.target.checked)} /> Team members</label>
-        </div>
-      </div>
-      <div className="mtg-label" style={{ margin: '14px 0 6px' }}>Engagements · {chosen.length} selected
-        <button className="mtg-link-btn" onClick={() => setPicked(new Set(candidates.filter((e) => withNotes(e.id)).map((e) => e.id)))}>With notes</button>
-        <button className="mtg-link-btn" onClick={() => setPicked(new Set(candidates.map((e) => e.id)))}>All</button>
-        <button className="mtg-link-btn" onClick={() => setPicked(new Set())}>None</button>
-      </div>
-      <div className="mtg-recap-list">
-        {candidates.map((e) => {
-          const n = notesFor(e.id).filter((x) => x.date === date).length;
-          return (
-            <label key={e.id} className={'mtg-recap-item' + (picked.has(e.id) ? ' on' : '')}>
-              <input type="checkbox" checked={picked.has(e.id)} onChange={() => toggle(e.id)} />
-              <span className="mtg-recap-name">{e.name}</span>
-              <span className={n ? 'mtg-recap-n' : 'mtg-recap-n none'}>{n ? `${n} note${n > 1 ? 's' : ''}` : 'no notes'}</span>
-            </label>
-          );
-        })}
-      </div>
-      {chosen.some((e) => !withNotes(e.id)) && <div className="small" style={{ color: '#F0A54A', marginTop: 8 }}>Engagements without notes on this date appear as “No notes recorded for this session”.</div>}
-    </ModalFrame>
-  );
-}
