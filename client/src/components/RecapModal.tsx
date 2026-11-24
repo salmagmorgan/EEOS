@@ -97,14 +97,16 @@ export function RecapModal({ session, only, order }: { session?: string; only?: 
   const candidates = useMemo(() => {
     const ids = new Set([...m.engagements.filter((e) => m.bucket(e) === 'active').map((e) => e.id), ...m.engagements.filter((e) => e.status !== 'deleted' && withNotes(e.id)).map((e) => e.id)]);
     const rank = new Map((order ?? []).map((id, i) => [id, i]));
-    const has = (id: string) => (withNotes(id) ? 0 : 1);
-    return [...ids].map((id) => m.engagement(id)!).filter(Boolean).sort((a, b) => has(a.id) - has(b.id) || (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999) || a.name.localeCompare(b.name));
+    // Active engagements first (in the meeting page's order), then closed/paused ones that have notes that day.
+    const act = (id: string) => (m.bucket(m.engagement(id)!) === 'active' ? 0 : 1);
+    return [...ids].map((id) => m.engagement(id)!).filter(Boolean).sort((a, b) => act(a.id) - act(b.id) || (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999) || a.name.localeCompare(b.name));
   }, [m, date, order, notesFor]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(only ? [only] : candidates.filter((e) => withNotes(e.id)).map((e) => e.id)));
+  const defaults = () => candidates.filter((e) => m.bucket(e) === 'active' || withNotes(e.id)).map((e) => e.id);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(only ? [only] : defaults()));
   const firstDate = useRef(true);
   useEffect(() => {
     if (firstDate.current) { firstDate.current = false; return; }
-    if (!only) setPicked(new Set(candidates.filter((e) => withNotes(e.id)).map((e) => e.id)));
+    if (!only) setPicked(new Set(defaults()));
   }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
   const [comments, setComments] = useState(true);
   const [team, setTeam] = useState(true);
@@ -200,8 +202,8 @@ export function RecapModal({ session, only, order }: { session?: string; only?: 
             <label className="mtg-check"><input type="checkbox" checked={team} onChange={(x) => setTeam(x.target.checked)} /> Team members</label>
           </div>
           <div className="mtg-label" style={{ margin: '14px 0 6px' }}>Engagements · {chosen.length}
-            <button className="mtg-link-btn" onClick={() => setPicked(new Set(candidates.filter((e) => withNotes(e.id)).map((e) => e.id)))}>With notes</button>
-            <button className="mtg-link-btn" onClick={() => setPicked(new Set(candidates.map((e) => e.id)))}>All</button>
+            <button className="mtg-link-btn" onClick={() => setPicked(new Set(defaults()))}>All active</button>
+            <button className="mtg-link-btn" onClick={() => setPicked(new Set(candidates.filter((e) => withNotes(e.id)).map((e) => e.id)))}>Only with notes</button>
             <button className="mtg-link-btn" onClick={() => setPicked(new Set())}>None</button>
           </div>
           <div className="mtg-recap-list">

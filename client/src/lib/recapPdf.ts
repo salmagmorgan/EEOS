@@ -110,7 +110,8 @@ export async function buildRecapPdf(input: RecapInput): Promise<{ blob: Blob; re
 
     // ---- status summary, centred
     const counts = (['on-track', 'at-risk', 'off-track'] as MeetingRag[]).map((r) => [r, input.items.filter((x) => x.rag === r).length] as const).filter(([, n]) => n > 0);
-    const summary = [`${input.items.length} engagement${input.items.length === 1 ? '' : 's'}`, ...counts.map(([r, n]) => `${n} ${RAG_LABEL[r].toLowerCase()}`)];
+    const noNotes = input.items.filter((x) => !x.notes.length).length;
+    const summary = [`${input.items.length} engagement${input.items.length === 1 ? '' : 's'}`, ...counts.map(([r, n]) => `${n} ${RAG_LABEL[r].toLowerCase()}`), ...(noNotes ? [`${noNotes} without notes`] : [])];
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     const gap = 16;
@@ -119,8 +120,8 @@ export async function buildRecapPdf(input: RecapInput): Promise<{ blob: Blob; re
     summary.forEach((t, i) => {
       if (draw) {
         if (i) {
-          const r = counts[i - 1][0];
-          doc.setFillColor(...hex(TBC_STATUS[r]));
+          const r = counts[i - 1]?.[0];
+          doc.setFillColor(...hex(r ? TBC_STATUS[r] : TBC.lavender));
           doc.circle(x + 3, y - 3, 3, 'F');
         }
         color(i ? TBC.black : TBC.grey);
@@ -132,7 +133,10 @@ export async function buildRecapPdf(input: RecapInput): Promise<{ blob: Blob; re
 
     // ---- one block per engagement
     const lineH = size * 1.32;
-    input.items.forEach((it, idx) => {
+    // Engagements with notes get a block each; those without are listed together at the end.
+    const withNotes = input.items.map((it, idx) => ({ it, idx })).filter((x) => x.it.notes.length);
+    const without = input.items.filter((it) => !it.notes.length);
+    withNotes.forEach(({ it, idx }, pos) => {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(size);
       const notes = it.notes.length
@@ -214,13 +218,33 @@ export async function buildRecapPdf(input: RecapInput): Promise<{ blob: Blob; re
         doc.rect(M, top + 1, 3, Math.max(10, y - top - 2), 'F');
       }
       y += compact ? 5 : 8;
-      if (idx < input.items.length - 1 && draw) {
+      if ((pos < withNotes.length - 1 || without.length) && draw) {
         doc.setDrawColor(...hex('#E4E2EE'));
         doc.setLineWidth(0.6);
         doc.line(M, y - (compact ? 3 : 4), W - M, y - (compact ? 3 : 4));
       }
       y += compact ? 2 : 4;
     });
+    if (without.length) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(size);
+      ensure(size * 3);
+      color(TBC.grey);
+      if (draw) doc.text(`No notes recorded this session (${without.length})`, M + 12, y + size);
+      y += size + 6;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(size - 0.5);
+      const names = without.map((it) => `${clean(it.name)} (${clean(it.leader)})`).join('   ·   ');
+      const lines = doc.splitTextToSize(names, contentW - 22) as string[];
+      color(TBC.black);
+      const top = y;
+      lines.forEach((l) => { ensure(lineH); if (draw) doc.text(l, M + 12, y + size - 2); y += lineH - 0.5; });
+      if (draw) {
+        doc.setFillColor(...hex(TBC.lavender));
+        doc.rect(M, top - size - 5, 3, y - top + size + 4, 'F');
+      }
+      y += 6;
+    }
     return { pages: page, used: y };
   };
 
