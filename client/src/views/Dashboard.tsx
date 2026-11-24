@@ -107,11 +107,11 @@ export default function Dashboard() {
 function MeetingPanel() {
   const { model: m, data } = useWorkspace();
   const nav = useNavigate();
-  const latest = new Map<string, { key: string; rag: string; notes: string }>();
+  const latest = new Map<string, { key: string; rag: string; notes: string; id: string }>();
   for (const n of data.meetingNotes ?? []) {
     const cur = latest.get(n.engagementId);
     const key = n.date + n.createdAt;
-    if (!cur || key > cur.key) latest.set(n.engagementId, { key, rag: n.rag, notes: n.notes || n.whereWeAre || n.nextSteps });
+    if (!cur || key > cur.key) latest.set(n.engagementId, { key, rag: n.rag, notes: n.notes || n.whereWeAre || n.nextSteps, id: n.id });
   }
   const rows = m.active.map((e) => ({ e, n: latest.get(e.id) }));
   const count = (r: string) => rows.filter((x) => x.n?.rag === r).length;
@@ -130,7 +130,7 @@ function MeetingPanel() {
         </div>
         <div className="dash-mtg-watch">
           {watch.length ? watch.map(({ e, n }) => (
-            <button key={e.id} className="dash-mtg-item" onClick={() => nav('/engagements/meeting?e=' + e.id)}>
+            <button key={e.id} className="dash-mtg-item" onClick={() => nav(`/engagements/meeting?e=${e.id}&edit=${n!.id}`)} title="Open this note to edit">
               <i style={{ background: n!.rag === 'off-track' ? 'var(--danger)' : '#F0A54A' }} />
               <div><b>{e.name}</b><small>{n!.notes.split('\n')[0].slice(0, 90) || 'No text'} · {m.name(e.leadId)}</small></div>
             </button>

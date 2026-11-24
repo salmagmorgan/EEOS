@@ -15,6 +15,10 @@ export interface RecapEngagement {
   comments: { by: string; text: string }[];
 }
 
+/** Where each engagement and note was drawn (points from the page top), so the preview can be clicked. */
+export interface RecapRegion { page: number; top: number; bottom: number; item: number; note: number }
+export const RECAP_PAGE = { width: 595.28, height: 841.89 };
+
 export interface RecapInput {
   date: string; // YYYY-MM-DD — the session
   preparedBy: string;
@@ -40,7 +44,7 @@ export function recapFileName(date: string): string {
   return `TBC - Engagement Meeting Updates Recap - ${longDate(date)}.pdf`;
 }
 
-export async function buildRecapPdf(input: RecapInput): Promise<Blob> {
+export async function buildRecapPdf(input: RecapInput): Promise<{ blob: Blob; regions: RecapRegion[] }> {
   const { jsPDF } = await import('jspdf');
   const mark = await dataUrl('/brand/tbc-mark-white.png');
 
@@ -52,6 +56,7 @@ export async function buildRecapPdf(input: RecapInput): Promise<Blob> {
   const contentW = W - M * 2;
 
   /** Lay everything out at a given text size; returns the pages' content (or the height used, when measuring). */
+  const regions: RecapRegion[] = [];
   const render = (doc: InstanceType<typeof jsPDF>, size: number, draw: boolean, compact = false) => {
     let page = 1;
     let y = 0;
@@ -148,6 +153,7 @@ export async function buildRecapPdf(input: RecapInput): Promise<Blob> {
       ensure(Math.min(blockH, room - BAND - 30));
       const top = y;
 
+      if (draw) regions.push({ page, top: y - 2, bottom: y + nameH + 2 + metaLines.length * (lineH - 1) + (compact ? 1 : 4), item: idx, note: -1 });
       // name + status pill
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(size + 2);
@@ -185,8 +191,16 @@ export async function buildRecapPdf(input: RecapInput): Promise<Blob> {
       doc.setFontSize(size);
       color(it.notes.length ? TBC.black : TBC.grey);
       if (!it.notes.length) doc.setFont('helvetica', 'italic');
-      notes.forEach((lines) => {
-        lines.forEach((l) => { ensure(lineH); if (draw) doc.text(l, M + 12 + (l.startsWith('•') ? 0 : it.notes.length > 1 ? 10 : 0), y + size - 1); y += lineH; });
+      notes.forEach((lines, ni) => {
+        let start = y;
+        let startPage = page;
+        lines.forEach((l, li) => {
+          ensure(lineH);
+          if (li === 0 || page !== startPage) { if (page !== startPage && draw) regions.push({ page: startPage, top: start, bottom: room, item: idx, note: it.notes.length ? ni : -1 }); start = y; startPage = page; }
+          if (draw) doc.text(l, M + 12 + (l.startsWith('•') ? 0 : it.notes.length > 1 ? 10 : 0), y + size - 1);
+          y += lineH;
+        });
+        if (draw) regions.push({ page, top: start - 2, bottom: y + 1, item: idx, note: it.notes.length ? ni : -1 });
         y += 2;
       });
       doc.setFont('helvetica', 'italic');
@@ -234,5 +248,5 @@ export async function buildRecapPdf(input: RecapInput): Promise<Blob> {
     const right = `Prepared by ${clean(input.preparedBy)}  ·  Confidential  ·  Page ${p} of ${pages}`;
     doc.text(right, W - M, H - FOOT + 13, { align: 'right' });
   }
-  return doc.output('blob');
+  return { blob: doc.output('blob'), regions };
 }

@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { stageLabel } from '../../../shared/schedule';
 import type { MeetingNote } from '../../../shared/types';
 import { noteText, staffOf, useMeetingData } from '../lib/meetings';
-import { buildRecapPdf, recapFileName } from '../lib/recapPdf';
+import { buildRecapPdf, recapFileName, RECAP_PAGE, type RecapRegion } from '../lib/recapPdf';
 import { useWorkspace } from '../lib/workspace';
+import { NoteItem } from './MeetingNote';
 import { ModalFrame, useToast } from './ui';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -25,7 +26,7 @@ export function NotesReportIcon({ size = 18 }: { size?: number }) {
 }
 
 /** Draws a PDF's pages onto canvases (pdf.js, loaded on demand) — works the same on phones and computers. */
-function PdfPreview({ file, busy }: { file: File | null; busy: boolean }) {
+function PdfPreview({ file, busy, onPick, editable }: { file: File | null; busy: boolean; onPick?: (page: number, y: number) => void; editable?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const [pages, setPages] = useState(0);
   const [err, setErr] = useState('');
@@ -51,7 +52,9 @@ function PdfPreview({ file, busy }: { file: File | null; busy: boolean }) {
           c.width = vp.width;
           c.height = vp.height;
           c.style.width = '100%';
-          c.className = 'recap-page';
+          c.className = 'recap-page' + (editable ? ' editable' : '');
+          c.title = editable ? 'Click a note to edit it' : '';
+          c.dataset.page = String(i);
           await page.render({ canvasContext: c.getContext('2d')!, viewport: vp }).promise;
           canvases.push(c);
         }
@@ -72,14 +75,22 @@ function PdfPreview({ file, busy }: { file: File | null; busy: boolean }) {
         {busy && <span className="muted">Updating…</span>}
       </div>
       {err && <div className="small" style={{ color: 'var(--danger)' }}>Preview unavailable ({err}) — the download still works.</div>}
-      <div ref={box} className={'recap-preview' + (busy ? ' busy' : '')}>{!file && <div className="recap-preview-empty">Choose at least one engagement to see the preview.</div>}</div>
+      {editable && file && <div className="recap-hint">✏️ Click any note on the page to edit it</div>}
+      <div ref={box} className={'recap-preview' + (busy ? ' busy' : '')} onClick={(x) => {
+        const c = (x.target as HTMLElement).closest('canvas');
+        if (!c || !onPick) return;
+        const r = c.getBoundingClientRect();
+        onPick(Number(c.dataset.page), ((x.clientY - r.top) / r.height) * RECAP_PAGE.height);
+      }}>{!file && <div className="recap-preview-empty">Choose at least one engagement to see the preview.</div>}</div>
     </div>
   );
 }
 
 export function RecapModal({ session, only, order }: { session?: string; only?: string; notesFor?: (id: string) => MeetingNote[]; order?: string[] }) {
-  const { model: m, user } = useWorkspace();
+  const { model: m, user, data, canEdit } = useWorkspace();
   const { notesFor } = useMeetingData();
+  const [regions, setRegions] = useState<RecapRegion[]>([]);
+  const [editing, setEditing] = useState<{ eng: string; note: string } | null>(null);
   const toast = useToast();
   const [date, setDate] = useState(session ?? today());
   const withNotes = (id: string) => notesFor(id).some((n) => n.date === date);
@@ -104,7 +115,7 @@ export function RecapModal({ session, only, order }: { session?: string; only?: 
   const datesWithNotes = useMemo(() => [...new Set(m.engagements.flatMap((e) => notesFor(e.id).map((n) => n.date)))].sort().reverse().slice(0, 8), [m, notesFor]);
 
   // Rebuild the PDF (and its preview) shortly after any change.
-  const key = `${date}|${chosen.map((e) => e.id).join(',')}|${comments}|${team}`;
+  const key = `${date}|${chosen.map((e) => e.id).join(',')}|${comments}|${team}|${data.version}`;
   useEffect(() => {
     if (!chosen.length) { setFile(null); return; }
     let cancelled = false;
@@ -121,8 +132,8 @@ export function RecapModal({ session, only, order }: { session?: string; only?: 
             comments: comments ? day.flatMap((n) => n.comments.map((c) => ({ by: c.by, text: c.text }))) : [],
           };
         });
-        const blob = await buildRecapPdf({ date, preparedBy: user.name, items, showTeam: team });
-        if (!cancelled) setFile(new File([blob], recapFileName(date), { type: 'application/pdf' }));
+        const out = await buildRecapPdf({ date, preparedBy: user.name, items, showTeam: team });
+        if (!cancelled) { setFile(new File([out.blob], recapFileName(date), { type: 'application/pdf' })); setRegions(out.regions); }
       } catch (err) {
         if (!cancelled) toast('Could not create the PDF: ' + (err as Error).message, 'error');
       } finally {
@@ -131,6 +142,21 @@ export function RecapModal({ session, only, order }: { session?: string; only?: 
     }, 350);
     return () => { cancelled = true; clearTimeout(t); };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Click on the preview: find the note drawn there and open it for editing.
+  const pick = (page: number, y: number) => {
+    const hits = regions.filter((r) => r.page === page && y >= r.top - 3 && y <= r.bottom + 3);
+    const hit = hits.find((r) => r.note >= 0) ?? hits[0];
+    if (!hit) return;
+    const e = chosen[hit.item];
+    if (!e) return;
+    const day = notesFor(e.id).filter((n) => n.date === date).reverse();
+    const note = day[hit.note >= 0 ? hit.note : 0];
+    if (!note) { toast(`${e.name} has no notes on this date — add one on the meeting page.`, 'error'); return; }
+    setEditing({ eng: e.id, note: note.id });
+  };
+  const editingEng = editing ? m.engagement(editing.eng) : null;
+  const editingNote = editing ? notesFor(editing.eng).find((n) => n.id === editing.note) : null;
 
   const download = () => {
     if (!file) return;
@@ -157,6 +183,12 @@ export function RecapModal({ session, only, order }: { session?: string; only?: 
     </>}>
       <div className="recap-layout">
         <div className="recap-options">
+          {editingEng && editingNote && (
+            <div className="recap-editing">
+              <div className="mtg-label">✏️ Editing · {editingEng.name}<button className="mtg-link-btn" onClick={() => setEditing(null)}>Done</button></div>
+              <NoteItem key={editingNote.id} note={editingNote} e={editingEng} autoEdit onDone={() => setEditing(null)} />
+            </div>
+          )}
           <div className="form-field"><label>Session date</label><input type="date" value={date} onChange={(x) => x.target.value && setDate(x.target.value)} /></div>
           {datesWithNotes.length > 0 && (
             <div className="recap-dates">
@@ -185,7 +217,7 @@ export function RecapModal({ session, only, order }: { session?: string; only?: 
             })}
           </div>
         </div>
-        <PdfPreview file={file} busy={busy} />
+        <PdfPreview file={file} busy={busy} onPick={canEdit ? pick : undefined} editable={canEdit} />
       </div>
     </ModalFrame>
   );

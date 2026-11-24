@@ -756,3 +756,13 @@ button.mtg-member:hover{border-color:var(--accent);transform:translateY(-1px);}
   .recap-preview{max-height:none;}
   .export-report{flex-wrap:wrap;}
 }
+
+/* Click a note to edit it */
+.mtg-note-body.editable{cursor:text;border-radius:6px;margin:0 -4px;padding:0 4px;transition:background .15s;}
+.mtg-note-body.editable:hover{background:rgba(108,104,214,0.10);}
+.mtg-note.picked{box-shadow:0 0 0 2px var(--accent),0 10px 30px -12px var(--accent);}
+.mtg-row-snip.mtg-link-inline{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+.recap-preview .recap-page.editable{cursor:pointer;}
+.recap-hint{font-size:11.5px;color:var(--lavender);}
+.recap-editing{margin-bottom:14px;padding:10px;border-radius:12px;border:1px solid var(--accent);background:var(--accent-glow);display:flex;flex-direction:column;gap:6px;}

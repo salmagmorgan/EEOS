@@ -12,13 +12,9 @@ import { Avatar, Card, Confirm, Empty, ModalFrame, PageHead, fmtDate, useModal, 
 import { api } from '../lib/api';
 import { noteText, staffOf, useMeetingData } from '../lib/meetings';
 import { NotesReportIcon, RecapModal } from '../components/RecapModal';
+import { NoteItem, RAG, RagPicker } from '../components/MeetingNote';
 import { useWorkspace } from '../lib/workspace';
 
-export const RAG: Record<MeetingRag, { label: string; color: string; icon: string }> = {
-  'on-track': { label: 'On track', color: 'var(--ok)', icon: '🟢' },
-  'at-risk': { label: 'At risk', color: '#F0A54A', icon: '🟠' },
-  'off-track': { label: 'Off track', color: 'var(--danger)', icon: '🔴' },
-};
 const MS: Record<MilestoneStatus, { label: string; color: string; icon: string }> = {
   planned: { label: 'Planned', color: 'var(--text-faint)', icon: '○' },
   'in-progress': { label: 'In progress', color: 'var(--accent)', icon: '◐' },
@@ -202,7 +198,9 @@ export default function Meetings() {
 
   // A project's full view (?e=<id>); the main page lists all of them.
   const target = params.get('e');
-  const open = (id: string | null) => { setParams(id ? { e: id } : {}); window.scrollTo({ top: 0 }); };
+  const open = (id: string | null, editNote?: string) => { setParams(id ? { e: id, ...(editNote ? { edit: editNote } : {}) } : {}); if (!editNote) window.scrollTo({ top: 0 }); };
+  const editId = params.get('edit');
+  const doneEditing = () => { if (target) setParams({ e: target }, { replace: true }); };
   const [returnTo, setReturnTo] = useState<string | null>(null);
   useEffect(() => {
     if (!target && returnTo) { document.getElementById('mtg-row-' + returnTo)?.scrollIntoView({ block: 'center' }); setReturnTo(null); }
@@ -243,7 +241,7 @@ export default function Meetings() {
           <span className="mtg-label">Questions</span>
           {MEETING_QUESTIONS.map((x) => <span key={x.q} className="mtg-qchip" title={x.hint}>{x.icon} {x.q}</span>)}
         </div>
-        <ProjectCard e={e} m={m} session={session} notes={notesFor(e.id)} milestones={milestonesFor(e.id)} canWrite={canEdit && m.bucket(e) === 'active'} full />
+        <ProjectCard e={e} m={m} session={session} notes={notesFor(e.id)} milestones={milestonesFor(e.id)} canWrite={canEdit && m.bucket(e) === 'active'} full editId={editId} onEdited={doneEditing} />
       </>
     );
   }
@@ -328,7 +326,7 @@ export default function Meetings() {
             return (
               <div key={e.id} className="mtg-list-item">
                 {group !== null && group !== prev && <div className="mtg-group">{sort === 'lead' ? '👑' : '🏢'} {group}<span>{count} engagement{count === 1 ? '' : 's'}</span></div>}
-                <ProjectRow e={e} m={m} session={session} notes={notesFor(e.id)} milestones={milestonesFor(e.id)} onOpen={() => open(e.id)} />
+                <ProjectRow e={e} m={m} session={session} notes={notesFor(e.id)} milestones={milestonesFor(e.id)} onOpen={() => open(e.id)} onEditNote={(nid) => open(e.id, nid)} />
               </div>
             );
           })}
@@ -385,7 +383,7 @@ function SlimTime({ e, info }: { e: Engagement; info: ScheduleInfo | null }) {
 const own = (fn: () => void) => (x: { stopPropagation: () => void }) => { x.stopPropagation(); fn(); };
 const clientId = (m: Model, name: string) => m.clients().find((c) => c.name === name)?.id;
 
-function ProjectRow({ e, m, session, notes, milestones, onOpen }: { e: Engagement; m: Model; session: string; notes: MeetingNote[]; milestones: Milestone[]; onOpen: () => void }) {
+function ProjectRow({ e, m, session, notes, milestones, onOpen, onEditNote }: { e: Engagement; m: Model; session: string; notes: MeetingNote[]; milestones: Milestone[]; onOpen: () => void; onEditNote: (noteId: string) => void }) {
   const modal = useModal();
   const last = notes[0];
   const rag = last ? RAG[last.rag] : null;
@@ -426,7 +424,7 @@ function ProjectRow({ e, m, session, notes, milestones, onOpen }: { e: Engagemen
       </div>
       <div className="mtg-row-last">
         <div className="mtg-row-when">{covered ? <span style={{ color: 'var(--ok)' }}>✓ Notes this session</span> : last ? `Last notes ${fmtDate(last.date, { day: '2-digit', month: 'short' })}` : 'No notes yet'}</div>
-        {snippet && <div className="mtg-row-snip">{snippet}</div>}
+        {snippet && <button type="button" className="mtg-row-snip mtg-link-inline" title="Click to edit this note" onClick={own(() => onEditNote(last!.id))}>✏️ {snippet}</button>}
       </div>
       <span className="mtg-row-go" aria-hidden="true">›</span>
     </div>
@@ -434,7 +432,7 @@ function ProjectRow({ e, m, session, notes, milestones, onOpen }: { e: Engagemen
 }
 
 // ---------- one engagement ----------
-function ProjectCard({ e, m, session, notes, milestones, canWrite, full }: { e: Engagement; m: Model; session: string; notes: MeetingNote[]; milestones: Milestone[]; canWrite: boolean; full?: boolean }) {
+function ProjectCard({ e, m, session, notes, milestones, canWrite, full, editId, onEdited }: { e: Engagement; m: Model; session: string; notes: MeetingNote[]; milestones: Milestone[]; canWrite: boolean; full?: boolean; editId?: string | null; onEdited?: () => void }) {
   const { canEdit } = useWorkspace();
   const modal = useModal();
   const last = notes[0];
@@ -527,7 +525,7 @@ function ProjectCard({ e, m, session, notes, milestones, canWrite, full }: { e: 
       <div className="mtg-notes-grid" id={'mtg-notes-' + e.id}>
         {canWrite ? <NoteBox key={e.id + session} e={e} session={session} suggestedRag={last?.rag} />
           : <div className="mtg-note-col small muted">{canEdit ? 'This engagement isn’t active, so no new notes.' : 'View-only access: editors write the notes.'}</div>}
-        <div id={'mtg-hist-' + e.id} style={{ minWidth: 0 }}><History e={e} notes={notes} expanded={full} session={session} /></div>
+        <div id={'mtg-hist-' + e.id} style={{ minWidth: 0 }}><History e={e} notes={notes} expanded={full} session={session} editId={editId} onEdited={onEdited} /></div>
       </div>
     </div>
   );
@@ -559,21 +557,12 @@ function NoteBox({ e, session, suggestedRag }: { e: Engagement; session: string;
   );
 }
 
-function RagPicker({ value, onChange }: { value: MeetingRag; onChange: (r: MeetingRag) => void }) {
-  return (
-    <div className="mtg-seg">
-      {(Object.keys(RAG) as MeetingRag[]).map((r) => (
-        <button key={r} type="button" className={value === r ? 'on' : ''} style={value === r ? { background: RAG[r].color, borderColor: RAG[r].color } : undefined} onClick={() => onChange(r)}>{RAG[r].label}</button>
-      ))}
-    </div>
-  );
-}
 
 /** Every note for this engagement, newest first, each with edit / delete / comments. */
-function History({ e, notes, expanded, session }: { e: Engagement; notes: MeetingNote[]; expanded?: boolean; session: string }) {
+function History({ e, notes, expanded, session, editId, onEdited }: { e: Engagement; notes: MeetingNote[]; expanded?: boolean; session: string; editId?: string | null; onEdited?: () => void }) {
   const { model: m } = useWorkspace();
   const toast = useToast();
-  const [all, setAll] = useState(!!expanded);
+  const [all, setAll] = useState(!!expanded || (!!editId && notes.findIndex((n) => n.id === editId) >= 3));
   const SHOW = 3;
   const shown = all ? notes : notes.slice(0, SHOW);
   const exportCsv = () => {
@@ -596,7 +585,7 @@ function History({ e, notes, expanded, session }: { e: Engagement; notes: Meetin
       </div>
       {notes.length ? (
         <>
-          <div className="mtg-timeline">{shown.map((n) => <NoteItem key={n.id} note={n} e={e} isSession={n.date === session} />)}</div>
+          <div className="mtg-timeline">{shown.map((n) => <NoteItem key={n.id} note={n} e={e} isSession={n.date === session} autoEdit={n.id === editId} onDone={n.id === editId ? onEdited : undefined} />)}</div>
           {notes.length > SHOW && <button className="mtg-link-btn" onClick={() => setAll(!all)}>{all ? '▴ Show fewer' : `▾ Show all ${notes.length} notes`}</button>}
         </>
       ) : <div className="small muted">No notes yet — notes you save appear here.</div>}
@@ -604,91 +593,7 @@ function History({ e, notes, expanded, session }: { e: Engagement; notes: Meetin
   );
 }
 
-function NoteItem({ note, e, isSession }: { note: MeetingNote; e: Engagement; isSession?: boolean }) {
-  const { model: m, canEdit, act } = useWorkspace();
-  const modal = useModal();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(note.notes);
-  const [rag, setRagState] = useState<MeetingRag>(note.rag);
-  const [date, setDate] = useState(note.date);
-  const [busy, setBusy] = useState(false);
-  const r = RAG[note.rag];
-  const startEdit = () => { setText(note.notes || noteText(note).map((p) => (p.label ? `${p.label}: ` : '') + p.text).join('\n')); setRagState(note.rag); setDate(note.date); setEditing(true); };
-  const save = async () => {
-    setBusy(true);
-    const legacy = !note.notes && (note.whereWeAre || note.challenges || note.nextSteps);
-    const ok = await act(() => api.patch(`/meeting-notes/${note.id}`, { notes: text, rag, date, ...(legacy ? { whereWeAre: '', challenges: '', nextSteps: '' } : {}) }), 'Note updated');
-    setBusy(false);
-    if (ok) setEditing(false);
-  };
-  const remove = () => modal.open(<Confirm title="Delete this note?" danger confirmLabel="🗑 Delete"
-    message={<>Delete the {fmtDate(note.date)} note for <b>{e.name}</b>{note.comments.length ? `, with its ${note.comments.length} comment${note.comments.length > 1 ? 's' : ''}` : ''}? You can undo it from the Audit Trail.</>}
-    onConfirm={() => act(() => api.del(`/meeting-notes/${note.id}`), 'Note deleted')} />);
-  return (
-    <div className={'mtg-note' + (isSession ? ' this-session' : '')} style={{ ['--rag' as string]: (editing ? RAG[rag] : r).color }}>
-      <div className="mtg-note-head">
-        <b>{fmtDate(note.date)}</b>{isSession && <span className="mtg-today-tag">This session</span>}
-        <span style={{ color: r.color }}>{r.icon} {r.label}</span>
-        <span className="muted" title={note.editedAt ? `Edited by ${note.editedBy} on ${fmtDate(note.editedAt)}` : undefined}>by {note.createdBy}{note.editedAt ? ` · edited${note.editedBy && note.editedBy !== note.createdBy ? ' by ' + note.editedBy : ''}` : ''}</span>
-        {canEdit && !editing && (
-          <span className="mtg-note-tools">
-            <button type="button" title="Edit this note" onClick={startEdit}>✏️ Edit</button>
-            <button type="button" title="Delete this note" className="danger" onClick={remove}>🗑 Delete</button>
-          </span>
-        )}
-      </div>
-      {editing ? (
-        <div className="mtg-note-edit">
-          <textarea className="mtg-textarea" rows={4} value={text} onChange={(x) => setText(x.target.value)} autoFocus />
-          <div className="mtg-note-actions">
-            <RagPicker value={rag} onChange={setRagState} />
-            <input type="date" className="mtg-date" value={date} onChange={(x) => x.target.value && setDate(x.target.value)} title="Session date" />
-            <div className="row" style={{ gap: 6, marginLeft: 'auto' }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>Cancel</button>
-              <button className="btn btn-primary btn-sm" disabled={busy || !text.trim()} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <>
-          {noteText(note).map((p, i) => <div key={i} className="mtg-note-text">{p.label && <b>{p.label}: </b>}{p.text}</div>)}
-          {note.actions.length > 0 && (
-            <ul className="mtg-note-actions-list">
-              {note.actions.map((a) => <li key={a.id} className={a.done ? 'done' : ''}>{a.done ? '☑' : '☐'} {a.task}{a.ownerId && <span className="muted"> — {m.name(a.ownerId)}</span>}{a.due && <span className="muted"> · {fmtDate(a.due, { day: '2-digit', month: 'short' })}</span>}</li>)}
-            </ul>
-          )}
-        </>
-      )}
-      <button className="mtg-link-btn" onClick={() => setOpen(!open)}>💬 {note.comments.length ? `${note.comments.length} comment${note.comments.length > 1 ? 's' : ''}` : 'Comment'}</button>
-      {open && <Comments note={note} />}
-    </div>
-  );
-}
 
-function Comments({ note }: { note: MeetingNote }) {
-  const { canEdit, act, user } = useWorkspace();
-  const [text, setText] = useState('');
-  const post = async () => { if (text.trim() && (await act(() => api.post(`/meeting-notes/${note.id}/comments`, { text }), 'Comment added'))) setText(''); };
-  return (
-    <div className="mtg-comments">
-      {note.comments.map((c) => (
-        <div key={c.id} className="mtg-comment">
-          <div className="small"><b>{c.by}</b> <span className="muted">· {fmtDate(c.at, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
-            {canEdit && (c.by === user.name || user.role === 'admin') && <button className="mtg-link" onClick={() => act(() => api.del(`/meeting-notes/${note.id}/comments/${c.id}`), 'Comment deleted')}>Delete</button>}
-          </div>
-          <div style={{ whiteSpace: 'pre-wrap' }}>{c.text}</div>
-        </div>
-      ))}
-      {canEdit && (
-        <div className="mtg-comment-new">
-          <input placeholder="Add a comment…" value={text} onChange={(x) => setText(x.target.value)} onKeyDown={(x) => { if (x.key === 'Enter') post(); }} />
-          <button className="btn btn-sm" disabled={!text.trim()} onClick={post}>Post</button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 function MilestoneModal({ engagementId, milestone }: { engagementId: string; milestone?: Milestone }) {
   const { act } = useWorkspace();
